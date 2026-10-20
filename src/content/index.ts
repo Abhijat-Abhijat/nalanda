@@ -1,0 +1,30 @@
+import { WorldSchema, type World } from '../schema';
+import { validateWorlds } from './validate';
+import { aiWorld } from './ai-engineer';
+import { gitShellWorld } from './git-shell';
+import { sqlWorld } from './sql';
+import { httpWebWorld } from './http-web';
+import { jsWorld } from './javascript';
+import { pyWorld } from './python';
+import { feWorld } from './frontend';
+import { beWorld } from './backend';
+import { dbWorld } from './databases';
+import { doWorld } from './devops';
+import { alWorld } from './algorithms';
+import { csWorld } from './cs';
+import { clWorld } from './cloud';
+import { msWorld } from './monitoring';
+import { sdWorld } from './system-design';
+import { secWorld } from './security';
+import { engWorld } from './engineering';
+import { careerWorld } from './career';
+import { aaWorld } from './ai-advanced';
+import { jvWorld } from './java';
+import { pmWorld } from './payments';
+import { cxWorld } from './cpp';
+
+const raw: unknown[] = [aiWorld, gitShellWorld, sqlWorld, httpWebWorld, jsWorld, pyWorld, feWorld, beWorld, dbWorld, doWorld, alWorld, csWorld, clWorld, msWorld, sdWorld, secWorld, engWorld, careerWorld, aaWorld, jvWorld, pmWorld, cxWorld];
+
+export const worlds: World[] = raw.map((w) => WorldSchema.parse(w));
+const errors = validateWorlds(worlds);
+if (errors.length > 0) throw new Error(`Invalid content:\n${errors.join('\n')}`);

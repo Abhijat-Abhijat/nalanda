@@ -1,0 +1,296 @@
+import type { Chapter } from '../../schema';
+import { choice, fill, order } from '../helpers';
+import { deepTopic } from '../cs/h';
+
+export const jvObjects: Chapter = {
+  id: 'jv-objects',
+  title: 'Object-oriented design in Java',
+  summary: 'Designing classes that stay correct as systems grow: interfaces with default and static methods, composition over inheritance, immutable objects, the equals and hashCode contract, ordering with Comparable and Comparator, and enums as type-safe state machines. Grounded in the Java SE API specification and Effective Java; checked as of October 2026.',
+  lessons: [
+    deepTopic({
+      id: 'l1', key: 'jv-oo-1', title: 'Interfaces, default methods, and abstract classes', concept: 'jv-interfaces',
+      story: "For its first eighteen years, a Java interface could only declare abstract methods, so adding a method to a published interface broke every implementation. When Java 8 (March 2014) introduced lambdas and streams, the JDK team needed to add methods such as `forEach` and `stream` to `Collection` without breaking millions of classes. Their answer was **default methods**: interface methods with a body that implementations inherit unless they override them. Java 8 also allowed **static** interface methods, and Java 9 added **private** interface methods for sharing code between defaults.",
+      analogy: "A franchise manual: it lists what every branch must do (abstract methods), offers a standard recipe branches may follow or replace (default methods), and includes reference tables nobody customises (static methods).",
+      timeline: [['1996', 'Pure interfaces', 'Only abstract methods and constants.'], ['March 2014', 'Java 8 default and static methods', 'Interfaces evolve without breaking implementations (JSR 335).'], ['September 2017', 'Java 9 private interface methods', 'Shared helper code inside interfaces.'], ['2021', 'Sealed interfaces', 'Interfaces can restrict implementations (Java 17).']],
+      explain: "Use an **interface** to define a capability or contract (`Comparable`, `Repository`, `PaymentGateway`) that unrelated classes can implement; a class can implement many interfaces. Use an **abstract class** when implementations share state or a template algorithm with protected hooks; a class can extend only one. **Default methods** let interfaces add behaviour compatibly, but they cannot hold state. **Resolution rules** when the same method arrives from several places: (1) a method declared in the class or a superclass always wins; (2) otherwise the most specific interface wins (a sub-interface overrides its parent); (3) if two unrelated interfaces both provide a default, the class must **override** it and may call `A.super.method()` to pick one, or compilation fails. Design small, focused interfaces (the interface segregation principle) so implementations do not stub out methods they do not need.",
+      diagram: "who provides log()?\n  class defines it              → class wins\n  only interface A has default  → A.log()\n  A and B both have defaults    → compile error: class must override\n                                  (may call A.super.log())\n  nobody                        → class must implement it (abstract)",
+      ex1: ['java', 'a default method added compatibly', "public interface Repository<T, ID> {\n    Optional<T> findById(ID id);\n    default T getRequired(ID id) {\n        return findById(id).orElseThrow(() -> new NotFoundException(id));\n    }\n    static <T> List<T> nonNull(List<T> xs) { return xs.stream().filter(Objects::nonNull).toList(); }\n}"],
+      ex2: ['java', 'resolving a diamond conflict', "interface Camera { default String name() { return \"camera\"; } }\ninterface Phone  { default String name() { return \"phone\"; } }\nclass SmartPhone implements Camera, Phone {\n    public String name() { return Phone.super.name(); }   // required: both provide defaults\n}"],
+      deepDive: {
+        explain: "Default methods are a tool for **interface evolution**, not a way to build multiple inheritance of behaviour. Because defaults cannot see implementation state, they work best when written in terms of the interface's own abstract methods (as `getRequired` uses `findById`). Adding a default method can still break clients: if an implementation already has a method with the same signature but different semantics, it now overrides the default unintentionally, and conflicts appear when a class implements two interfaces that gain the same default. Abstract classes remain useful for template methods (`AbstractList` implements most of `List` in terms of `get` and `size`) and shared fields. In Spring, interfaces define service and repository contracts so implementations can be swapped and proxied; JDK dynamic proxies only work on interfaces, which is one reason Spring historically preferred them (it can also proxy classes with CGLIB).",
+        example: ['js', 'resolving which implementation a call uses', "function resolveMethod(classDefines, interfacesWithDefault) {\n  if (classDefines) return 'class';                         // class always wins\n  if (interfacesWithDefault.length === 0) return 'abstract';   // must be implemented\n  if (interfacesWithDefault.length === 1) return interfacesWithDefault[0];\n  return 'conflict';                                        // unrelated defaults: override required\n}"],
+        tradeoffs: [['Tool', 'Use for', 'Limit'], ['Interface', 'Contracts, multiple capabilities, proxies', 'No instance state'], ['Default method', 'Evolving interfaces compatibly', 'Conflicts; cannot use state'], ['Abstract class', 'Shared state, template methods', 'Single inheritance'], ['Static interface method', 'Factories and helpers tied to the type', 'Not inherited by implementations']],
+        failures: [['Class does not compile after a library upgrade', 'Two interfaces gained the same default', 'Override and choose with X.super.m()'], ['Implementations stub many methods with exceptions', 'Fat interface', 'Split into focused interfaces'], ['Default method silently overridden with different meaning', 'Existing method with the same signature', 'Review implementations when adding defaults'], ['Logic duplicated across implementations', 'No shared template', 'Abstract base class or default built on abstract methods']],
+      },
+      warn: "Adding a default method to a widely implemented interface is not risk-free: existing classes with the same method signature now override it, possibly with different behaviour.",
+      production: {
+        numbers: "Java 8 added more than a dozen default methods to Collection, List, Map, and Iterable (such as forEach, removeIf, getOrDefault, computeIfAbsent) without breaking existing implementations.",
+        observe: "Architecture tests (for example ArchUnit) can enforce that services depend on interfaces in a domain package rather than on concrete infrastructure classes.",
+        security: "Interfaces for gateways (payments, identity, storage) make it easy to substitute fakes in tests and to wrap implementations with auditing or authorisation decorators.",
+        checklist: ['Small, focused interfaces', 'Defaults built on abstract methods', 'Abstract classes for shared state and templates', 'Diamond conflicts resolved explicitly', 'Defaults added with review of implementers', 'Static factories on interfaces where natural', 'Architecture rules enforced in tests'],
+        sources: ['JSR 335: Lambda Expressions for the Java Programming Language (Java 8)', 'The Java Language Specification, section 9.4.1 (inheritance and overriding of interface methods)', 'Bloch, "Effective Java" (3rd ed.), item 20: prefer interfaces to abstract classes; item 21: design interfaces for posterity'],
+      },
+      tip: "When two defaults conflict, the compiler forces a choice. Make that choice explicit with `Interface.super.method()` and a comment saying why.",
+      faq: [['Why were default methods added?', 'To evolve interfaces such as Collection in Java 8 without breaking implementations.'], ['Who wins: class method or interface default?', 'The class method.'], ['What happens with two unrelated defaults?', 'The class must override the method, or compilation fails.'], ['When choose an abstract class?', 'When implementations share state or a template algorithm.'], ['Can interface methods be private?', 'Yes, since Java 9.']],
+      ex: { prompt: 'Write resolveMethod(classDefines, interfacesWithDefault) returning which implementation a call uses: "class" if the class defines the method; otherwise "abstract" if no interface has a default; the interface name if exactly one does; "conflict" if more than one (unrelated interfaces).', fn: 'resolveMethod', params: 'classDefines, interfacesWithDefault', sig: '(bool classDefines, string[] interfacesWithDefault) -> string', java: `class Solution {
+    public String resolveMethod(boolean classDefines, String[] ifaces) {
+        if (classDefines) return "class";
+        if (ifaces.length == 0) return "abstract";
+        if (ifaces.length == 1) return ifaces[0];
+        return "conflict";
+    }
+}
+`, cases: [{ args: [true, ['A', 'B']], expect: 'class' }, { args: [false, ['Logger']], expect: 'Logger' }, { args: [false, ['A', 'B']], expect: 'conflict' }, { args: [false, []], expect: 'abstract' }], solution: `function resolveMethod(c,i){if(c)return'class';if(i.length===0)return'abstract';if(i.length===1)return i[0];return'conflict'}`, hint: 'Check the class first, then count interface defaults.' },
+      quiz: [
+        choice('jv-oo-1-q1', 'jv-interfaces', 'A class implements Camera and Phone; both define default name(). Result?', ['compile error unless the class overrides name()', 'Camera wins', 'Phone wins', 'runtime exception'], 0, 'Explicit choice.'),
+        choice('jv-oo-1-q2', 'jv-interfaces', 'Several implementations need shared fields and a template algorithm. Use...', ['an abstract class', 'a default method', 'a static interface method', 'an enum'], 0, 'State.'),
+        choice('jv-oo-1-q3', 'jv-interfaces', 'Which Java version introduced default methods?', ['8', '5', '11', '17'], 0, 'Lambdas.'),
+        fill('jv-oo-1-q4', 'jv-interfaces', 'To call Phone\'s default from an override, write Phone.___.name()', ['super'], 'Diamond.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l2', key: 'jv-oo-2', title: 'Composition over inheritance', concept: 'jv-composition',
+      story: "The Gang of Four's *Design Patterns* (1994) advised \"favour object composition over class inheritance\", and Joshua Bloch's *Effective Java* made the danger concrete with a counter: a subclass of `HashSet` that counts added elements by overriding `add` and `addAll`. It reports twice the real number, because `HashSet.addAll` internally calls `add`. The subclass depended on an implementation detail of its parent, an example of the **fragile base class** problem.",
+      analogy: "Hiring a contractor (composition) versus marrying into a family business (inheritance): with a contractor you agree on the job; by marrying in, you inherit every family habit, including ones nobody told you about.",
+      timeline: [['1987', 'Liskov substitution', 'Barbara Liskov\'s keynote on data abstraction and hierarchy.'], ['1994', 'Design Patterns', 'Gamma, Helm, Johnson, and Vlissides: favour composition.'], ['2001', 'Effective Java', 'Bloch\'s InstrumentedHashSet example of fragile inheritance.'], ['2010s', 'Frameworks prefer composition', 'Dependency injection wires collaborators instead of base classes.']],
+      explain: "**Inheritance** (`extends`) couples a subclass to its parent's implementation: overriding methods depends on how the parent calls its own methods, which can change between versions. It is appropriate when there is a genuine **is-a** relationship, the parent is designed and documented for extension, and the **Liskov substitution principle** holds: code using the parent must keep working with any subclass. **Composition** holds a reference to another object and **delegates** to it: an `InstrumentedSet` wraps any `Set` and forwards calls, counting in its own methods. It depends only on the public interface, works with any implementation, and lets you combine behaviours (logging, caching, retries) as decorators. Mark classes `final` unless designed for extension, and document self-use of overridable methods when they are.",
+      diagram: "inheritance:  InstrumentedHashSet extends HashSet\n  addAll([b,c,d]) → count += 3 → super.addAll → add(b), add(c), add(d) → count += 3 → 6 (wrong)\ncomposition:  InstrumentedSet implements Set { private final Set inner; }\n  addAll([b,c,d]) → count += 3 → inner.addAll(...) → 3 (correct)",
+      ex1: ['java', 'the fragile subclass (do not do this)', "class InstrumentedHashSet<E> extends HashSet<E> {\n    int addCount = 0;\n    @Override public boolean add(E e) { addCount++; return super.add(e); }\n    @Override public boolean addAll(Collection<? extends E> c) { addCount += c.size(); return super.addAll(c); }\n}   // addAll counts twice: HashSet.addAll calls add"],
+      ex2: ['java', 'composition with forwarding', "class InstrumentedSet<E> extends ForwardingSet<E> {      // ForwardingSet delegates to a wrapped Set\n    private int addCount = 0;\n    InstrumentedSet(Set<E> s) { super(s); }\n    @Override public boolean add(E e) { addCount++; return super.add(e); }\n    @Override public boolean addAll(Collection<? extends E> c) { addCount += c.size(); return super.addAll(c); }\n}   // inner.addAll does not call our add → correct count"],
+      deepDive: {
+        explain: "Liskov violations are the subtle cost of inheritance. A `Square extends Rectangle` that keeps width and height equal breaks callers that set width and height independently; a read-only subclass that throws on `add` breaks callers of a mutable collection type. Signs of misuse: subclasses that override methods to throw `UnsupportedOperationException`, deep hierarchies (more than two or three levels), and subclasses that need to know the order in which the parent calls its methods. Composition has costs too: forwarding boilerplate (reduced by a reusable forwarding base class or IDE generation), and identity issues (the wrapper is not the wrapped object). In Spring applications, composition is the default: services receive collaborators through constructor injection, and cross-cutting behaviour (transactions, caching, security) is added by proxies around beans rather than by base classes.",
+        example: ['js', 'reproducing the double-count bug', "function addCounts(ops) {                     // ops like 'add:a' or 'addAll:b,c,d'\n  let broken = 0, correct = 0;\n  for (const op of ops) {\n    const [kind, v] = op.split(':');\n    const n = kind === 'add' ? 1 : v.split(',').length;\n    correct += n;\n    broken += kind === 'add' ? 1 : 2 * n;      // subclass counts in addAll and again in add\n  }\n  return [broken, correct];\n}"],
+        tradeoffs: [['Approach', 'Strength', 'Risk'], ['Inheritance', 'Reuse with little code; polymorphism', 'Fragile base class; Liskov violations'], ['Composition + delegation', 'Depends only on interfaces; combinable', 'Forwarding boilerplate'], ['Decorator pattern', 'Stack behaviours at runtime', 'Many small wrapper classes'], ['Framework proxies (AOP)', 'Cross-cutting concerns without base classes', 'Self-invocation bypasses proxies']],
+        failures: [['Counts or totals doubled after a library upgrade', 'Subclass relies on parent self-use', 'Compose and delegate instead'], ['Callers crash with UnsupportedOperationException', 'Subclass refuses parent operations', 'Separate interfaces; do not inherit'], ['Square breaks rectangle code', 'Liskov violation', 'Model as separate types'], ['Five-level hierarchy nobody understands', 'Inheritance for code reuse', 'Flatten; extract collaborators']],
+      },
+      warn: "Do not extend a class you do not control unless it is documented for extension. Its internal self-calls are an implementation detail that can change in any release.",
+      production: {
+        numbers: "In the classic example, adding one element and then three with addAll reports 7 additions instead of 4, because each addAll element is counted twice.",
+        observe: "Code review signals: classes extending framework or JDK collection classes, overrides that throw UnsupportedOperationException, and hierarchies deeper than three levels.",
+        security: "Subclassing security-sensitive classes can bypass checks by overriding methods; make such classes final and expose behaviour through interfaces and composition.",
+        checklist: ['final by default', 'Extension only for documented base classes', 'Liskov substitution checked for every subclass', 'Delegation for reuse of other classes', 'Decorators for cross-cutting behaviour', 'Shallow hierarchies', 'Constructor injection of collaborators'],
+        sources: ['Gamma, Helm, Johnson, Vlissides, "Design Patterns" (1994)', 'Bloch, "Effective Java" (3rd ed.), item 18: favour composition over inheritance; item 19: design and document for inheritance or else prohibit it', 'Liskov and Wing, "A Behavioral Notion of Subtyping" (1994)'],
+      },
+      tip: "Before writing `extends`, ask: would every caller of the parent be happy to receive this subclass, and is the parent designed to be extended? If either answer is no, compose.",
+      faq: [['What is the fragile base class problem?', 'Subclasses break when the parent\'s internal implementation changes.'], ['What does Liskov substitution require?', 'Subclasses must work anywhere the parent is expected.'], ['Why does InstrumentedHashSet double-count?', 'HashSet.addAll calls add, which the subclass also counts.'], ['When is inheritance appropriate?', 'For genuine is-a relationships with classes designed for extension.'], ['How do frameworks add cross-cutting behaviour without inheritance?', 'Proxies and decorators.']],
+      ex: { prompt: 'Write addCounts(ops) where ops are "add:x" or "addAll:a,b,c". Return [broken, correct]: correct counts each element added once; broken mimics the inheritance bug, counting add once but each addAll element twice.', fn: 'addCounts', params: 'ops', sig: '(string[] ops) -> int[]', java: `class Solution {
+    public int[] addCounts(String[] ops) {
+        int broken = 0, correct = 0;
+        for (String op : ops) {
+            String[] kv = op.split(":");
+            int n = kv[0].equals("add") ? 1 : kv[1].split(",").length;
+            correct += n;
+            broken += kv[0].equals("add") ? 1 : 2 * n;
+        }
+        return new int[] { broken, correct };
+    }
+}
+`, cases: [{ args: [['add:a', 'addAll:b,c,d']], expect: [7, 4] }, { args: [['add:x', 'add:y']], expect: [2, 2] }], solution: `function addCounts(ops){let b=0,c=0;for(const op of ops){const[k,v]=op.split(':');const n=k==='add'?1:v.split(',').length;c+=n;b+=k==='add'?1:2*n}return[b,c]}`, hint: 'Count addAll elements twice for the broken version.' },
+      quiz: [
+        choice('jv-oo-2-q1', 'jv-composition', 'ReadOnlyList extends ArrayList and throws on add. Which principle does it violate?', ['Liskov substitution', 'Single responsibility', 'DRY', 'YAGNI'], 0, 'Substitutability.'),
+        choice('jv-oo-2-q2', 'jv-composition', 'You need logging around any Set implementation. Best approach?', ['a decorator that wraps and delegates', 'extend HashSet', 'extend TreeSet', 'copy the JDK source'], 0, 'Composition.'),
+        choice('jv-oo-2-q3', 'jv-composition', 'Default stance for classes not designed for extension?', ['make them final', 'make them abstract', 'make all methods protected', 'no stance'], 0, 'Effective Java.'),
+        fill('jv-oo-2-q4', 'jv-composition', 'A subclass broken by its parent\'s internal changes illustrates the fragile ___ class problem', ['base'], 'Self-use.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l3', key: 'jv-oo-3', title: 'Immutable objects', concept: 'jv-immutability',
+      story: "`java.util.Date` shipped in 1996 as a mutable class, and generations of bugs followed: a getter returned the internal `Date`, a caller changed it, and an object's state changed behind its back. When Java 8 introduced `java.time` (JSR 310, led by Stephen Colebourne based on Joda-Time), every class (`LocalDate`, `Instant`, `Duration`) was **immutable**. The difference shows the value of immutability: objects that cannot change are simpler to reason about, safe to share between threads, and safe to use as map keys.",
+      analogy: "A signed contract photocopied for each party: everyone holds a copy, nobody can alter the original, and any change requires drafting a new contract.",
+      timeline: [['1996', 'Mutable Date', 'java.util.Date allows changes after creation.'], ['2001', 'Effective Java', '"Minimise mutability" becomes a standard guideline.'], ['March 2014', 'java.time', 'Immutable date and time API (JSR 310).'], ['2017–2021', 'List.of and records', 'Immutable collections (Java 9) and records (Java 16).']],
+      explain: "To make a class immutable: (1) make it `final` (or use private constructors with factories) so subclasses cannot add mutability; (2) make all fields `private final`; (3) provide no setters; (4) **defensively copy** mutable inputs in the constructor and mutable outputs in getters (or store immutable copies with `List.copyOf`, `Map.copyOf`); (5) never let `this` escape during construction. Changes return **new instances** (`withPrice`, `plusDays`). Distinguish **unmodifiable views** (`Collections.unmodifiableList` wraps a list that can still change underneath) from **immutable copies** (`List.copyOf`). Benefits: thread safety without locks, safe caching and sharing, reliable `hashCode` for map keys, and simpler debugging. The `final` field semantics in the Java memory model also guarantee that other threads see fully constructed values once the constructor finishes, provided `this` did not escape.",
+      diagram: "immutable checklist\n  final class · private final fields · no setters\n  constructor: tags = List.copyOf(tags)      (copy in)\n  getter:      return tags                   (already immutable)\n  Date/arrays: copy in AND copy out\n  change:      withX(...) returns a new instance",
+      ex1: ['java', 'an immutable value class (Java 8 compatible)', "public final class Money {\n    private final BigDecimal amount;\n    private final String currency;\n    public Money(BigDecimal amount, String currency) {\n        this.amount = Objects.requireNonNull(amount);\n        this.currency = Objects.requireNonNull(currency);\n    }\n    public Money plus(Money o) {\n        if (!currency.equals(o.currency)) throw new IllegalArgumentException(\"currency\");\n        return new Money(amount.add(o.amount), currency);   // new instance\n    }\n}"],
+      ex2: ['java', 'unmodifiable view versus copy', "List<String> source = new ArrayList<>(List.of(\"a\"));\nList<String> view = Collections.unmodifiableList(source);\nList<String> copy = List.copyOf(source);\nsource.add(\"b\");\nview.size();   // 2: the view sees the change\ncopy.size();   // 1: the copy does not"],
+      deepDive: {
+        explain: "Immutability has costs: every change allocates a new object, which matters in tight loops; builders (`StringBuilder`, Lombok or hand-written builders) help construct complex objects efficiently before freezing them. Modern JVMs allocate short-lived objects cheaply, so for typical business objects the cost is negligible compared with the bugs avoided. Deep versus shallow: an immutable class holding a reference to a mutable object is only as immutable as that object, so copy or wrap nested collections. Frameworks interact with immutability: Jackson can construct immutable objects through `@JsonCreator` constructors or records; JPA entities generally need mutability, so keep domain value objects (Money, Address, DateRange) immutable and embed them, and treat entities as the mutable boundary. In concurrent code, immutable messages between threads remove a whole class of data races.",
+        example: ['js', 'finding fields that break immutability', "function immutabilityIssues(fields, copied) {      // fields like 'private final List<String> tags'\n  const c = new Set(copied), out = [];\n  for (const f of fields) {\n    const t = f.trim().split(/\\s+/);\n    const name = t[t.length - 1], type = t[t.length - 2];\n    const mutable = /^(List|Map|Set|Date|Collection)\\b/.test(type) || type.endsWith('[]');\n    if (!t.includes('private') || !t.includes('final') || (mutable && !c.has(name))) out.push(name);\n  }\n  return out;\n}"],
+        tradeoffs: [['Choice', 'Benefit', 'Cost'], ['Immutable value objects', 'Thread-safe, shareable, reliable keys', 'New object per change'], ['Unmodifiable view', 'No copy', 'Underlying data can still change'], ['Immutable copy (List.copyOf)', 'True snapshot', 'Copy cost'], ['Mutable object with discipline', 'Fewer allocations', 'Aliasing and race bugs']],
+        failures: [['Object state changes unexpectedly', 'Getter exposed an internal mutable list or Date', 'Copy out or store immutable copies'], ['"Read-only" list changed under a caller', 'Unmodifiable view of a mutable list', 'List.copyOf for snapshots'], ['Subclass adds setters to an immutable type', 'Class not final', 'final class or private constructor'], ['Map entry lost after mutation', 'Mutable object used as a key', 'Immutable keys']],
+      },
+      warn: "Collections.unmodifiableList is a view, not a copy. If the original list changes, every holder of the view sees the change.",
+      production: {
+        numbers: "Short-lived allocations in modern JVM young generations typically cost nanoseconds; the cost of an immutable value object is rarely visible in profiles, while aliasing bugs can take days to find.",
+        observe: "Static analysis and code review should flag exposed mutable fields, setters on value objects, mutable map keys, and use of java.util.Date in new code.",
+        security: "Immutable objects cannot be changed after validation, preventing time-of-check to time-of-use bugs where a caller modifies data after it passed a security check.",
+        checklist: ['final class', 'private final fields', 'No setters; withX methods return new instances', 'Defensive copies of mutable inputs and outputs', 'List.copyOf / Map.copyOf for collections', 'java.time instead of Date', 'Immutable keys and messages between threads'],
+        sources: ['Bloch, "Effective Java" (3rd ed.), item 17: minimise mutability; item 50: make defensive copies when needed', 'JSR 310: Date and Time API (Java 8)', 'The Java Language Specification, section 17.5: final field semantics'],
+      },
+      tip: "Make value objects (money, addresses, date ranges, ids) immutable by default. Reserve mutability for entities and builders, where it is explicit.",
+      faq: [['Name the steps to make a class immutable.', 'final class, private final fields, no setters, defensive copies, no this-escape.'], ['View versus copy?', 'A view reflects changes to the source; a copy is a snapshot.'], ['Why is java.time better than Date?', 'Its classes are immutable and thread-safe.'], ['How do immutable objects change?', 'Methods return new instances.'], ['Why are immutable objects thread-safe?', 'Their state cannot change after construction.']],
+      ex: { prompt: 'Write immutabilityIssues(fields, copied). Each field is a declaration like "private final List<String> tags" (the last token is the name, the one before it the type). Report a field (in input order) if it is not private, not final, or has a mutable type (type starting with List, Map, Set, Date, or Collection, or ending with "[]") and its name is not in copied.', fn: 'immutabilityIssues', params: 'fields, copied', sig: '(string[] fields, string[] copied) -> string[]', java: `class Solution {
+    public String[] immutabilityIssues(String[] fields, String[] copied) {
+        Set<String> c = new HashSet<>(Arrays.asList(copied));
+        List<String> mutableTypes = Arrays.asList("List", "Map", "Set", "Date", "Collection");
+        List<String> out = new ArrayList<>();
+        for (String f : fields) {
+            List<String> t = Arrays.asList(f.trim().split(" "));
+            String name = t.get(t.size() - 1), type = t.get(t.size() - 2);
+            String base = type.contains("<") ? type.substring(0, type.indexOf('<')) : type;
+            boolean mutable = mutableTypes.contains(base) || type.endsWith("[]");
+            if (!t.contains("private") || !t.contains("final") || (mutable && !c.contains(name))) out.add(name);
+        }
+        return out.toArray(new String[0]);
+    }
+}
+`, cases: [{ args: [['private final String name', 'private final List<String> tags', 'public int count', 'private final int[] scores', 'private final Map<String,Integer> limits'], ['limits']], expect: ['tags', 'count', 'scores'] }, { args: [['private final String id'], []], expect: [] }], solution: `function immutabilityIssues(fields,copied){const c=new Set(copied);const out=[];for(const f of fields){const t=f.trim().split(/\\s+/);const name=t[t.length-1],type=t[t.length-2];const mutable=/^(List|Map|Set|Date|Collection)\\b/.test(type)||type.endsWith('[]');if(!t.includes('private')||!t.includes('final')||(mutable&&!c.has(name)))out.push(name)}return out}`, hint: 'Split each declaration into tokens; the last two are type and name.' },
+      quiz: [
+        choice('jv-oo-3-q1', 'jv-immutability', 'A getter returns the internal Date field. Risk?', ['callers can change the object\'s state', 'none', 'slower GC', 'compile error'], 0, 'Copy out.'),
+        choice('jv-oo-3-q2', 'jv-immutability', 'Which gives a true snapshot of a list?', ['List.copyOf', 'Collections.unmodifiableList', 'a cast to List', 'Arrays.asList'], 0, 'Copy.'),
+        choice('jv-oo-3-q3', 'jv-immutability', 'Why mark an immutable class final?', ['so subclasses cannot add mutability', 'for speed', 'for serialisation', 'required by the compiler'], 0, 'No mutable subclasses.'),
+        fill('jv-oo-3-q4', 'jv-immutability', 'Java 8\'s immutable date and time API lives in the package java.___', ['time'], 'JSR 310.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l4', key: 'jv-oo-4', title: 'The equals and hashCode contract', concept: 'jv-equals-hashcode',
+      story: "`HashMap` finds entries in two steps: `hashCode` picks a bucket, then `equals` confirms the match. If two objects are equal but return different hash codes, the map looks in the wrong bucket and reports that a key it contains is missing. This is among the most common Java bugs in interviews and in production: a class overrides `equals` but not `hashCode`, or uses mutable fields in both, and entries silently disappear from sets and caches.",
+      analogy: "A library where the shelf number comes from the book's title: if two copies of the same book get different shelf numbers, a librarian searching one shelf will never find the other copy.",
+      timeline: [['1996', 'Object.equals and hashCode', 'Contract defined in java.lang.Object.'], ['1998', 'Collections framework', 'HashMap and HashSet make the contract critical (Java 1.2).'], ['2011', 'Objects.equals and Objects.hash', 'Helpers added in Java 7.'], ['2021', 'Records', 'Generated equals and hashCode from all components (Java 16).']],
+      explain: "The **equals contract** (from `Object.equals`) requires it to be **reflexive** (x.equals(x)), **symmetric** (x.equals(y) iff y.equals(x)), **transitive**, **consistent** (same result while fields do not change), and `x.equals(null)` false. The **hashCode contract**: equal objects **must** have equal hash codes; unequal objects **may** collide, though fewer collisions mean faster maps. Rules of thumb: override both or neither; compute both from the same significant fields; use immutable fields for objects that will be map keys or set members; compare with `getClass()` for exact type matching or `instanceof` for final classes; use `Objects.equals` for nullable fields and `Objects.hash` (or a manual 31-based combination) for the hash. `String.hashCode` is computed as s[0]·31^(n−1) + … + s[n−1] with int overflow, which is why \"Aa\" and \"BB\" collide (both 2112).",
+      diagram: "HashMap.get(key):\n  bucket = hash(key.hashCode())  ─▶ wrong hashCode → wrong bucket → null (even though equal key exists)\n  in bucket: key.equals(candidate)\ncontract: a.equals(b) ⇒ a.hashCode() == b.hashCode()   (not the reverse)\n\"Aa\".hashCode() == \"BB\".hashCode() == 2112   (collision is allowed)",
+      ex1: ['java', 'a correct pair (Java 8 compatible)', "@Override public boolean equals(Object o) {\n    if (this == o) return true;\n    if (o == null || getClass() != o.getClass()) return false;\n    Sku other = (Sku) o;\n    return code.equals(other.code) && Objects.equals(region, other.region);\n}\n@Override public int hashCode() { return Objects.hash(code, region); }"],
+      ex2: ['java', 'the classic bug', "class Point { int x, y; /* equals overridden, hashCode NOT overridden */ }\nSet<Point> seen = new HashSet<>();\nseen.add(new Point(1, 2));\nseen.contains(new Point(1, 2));   // false: identity hashCode differs"],
+      deepDive: {
+        explain: "Inheritance makes equals hard: adding a field in a subclass while keeping symmetry and transitivity with the parent is impossible in general (Effective Java item 10), which is one more reason to favour composition and final value classes. `instanceof`-based equals breaks symmetry when subclasses add state; `getClass()`-based equals breaks Liskov substitution for subclasses without new state; Hibernate proxies complicate both (compare by id carefully, or use a business key). **Mutable keys** are the second big trap: if a field used in hashCode changes while the object sits in a `HashSet`, the set can no longer find or remove it. Performance: a constant hashCode (for example always 42) satisfies the contract but turns maps into linked lists or trees with O(n) or O(log n) lookups. Never use `Math.abs(hashCode()) % n` for bucketing: `Math.abs(Integer.MIN_VALUE)` is negative, and some strings (\"polygenelubricants\") hash to exactly `Integer.MIN_VALUE`; use `Math.floorMod` or masking.",
+        example: ['js', 'Java String.hashCode with 32-bit overflow', "function stringHash(s) {\n  let h = 0;\n  for (let i = 0; i < s.length; i++) h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0;   // int arithmetic\n  return h;\n}"],
+        tradeoffs: [['Approach', 'Strength', 'Weakness'], ['Records', 'Correct by construction', 'All components participate'], ['Objects.equals / Objects.hash', 'Short, null-safe', 'Varargs allocation in hashCode'], ['Manual 31-based hash', 'Fast, no allocation', 'More code'], ['IDE or Lombok generation', 'Consistent pairs', 'Must regenerate when fields change']],
+        failures: [['contains() false for an equal object', 'equals overridden without hashCode', 'Override both from the same fields'], ['Item cannot be removed from a HashSet', 'Field in hashCode changed after insertion', 'Immutable keys'], ['Map lookups slow under load', 'Poor or constant hashCode', 'Hash all significant fields'], ['Negative bucket index exception', 'Math.abs(hashCode()) % n', 'Math.floorMod or bit masking']],
+      },
+      warn: "Never let a field used in hashCode change while the object is a HashMap key or HashSet element. The entry becomes unreachable, and memory leaks or missing data follow.",
+      production: {
+        numbers: "\"Aa\" and \"BB\" both hash to 2112; \"polygenelubricants\".hashCode() is Integer.MIN_VALUE (−2,147,483,648), for which Math.abs returns a negative number.",
+        observe: "Static analysis flags classes overriding only one of equals and hashCode; heap dumps showing ever-growing HashSet or HashMap instances can indicate mutable keys.",
+        security: "Hash flooding (many keys colliding on purpose) once enabled denial-of-service attacks on hash maps; Java 8 mitigates it by turning long bucket chains into balanced trees.",
+        checklist: ['equals and hashCode overridden together', 'Same significant fields in both', 'Immutable fields for keys', 'getClass versus instanceof chosen deliberately', 'Objects.equals for nullable fields', 'Records for value types', 'Math.floorMod, never Math.abs, for bucketing'],
+        sources: ['Java SE API: java.lang.Object.equals and hashCode', 'Bloch, "Effective Java" (3rd ed.), items 10 and 11', 'Java SE API: String.hashCode formula'],
+      },
+      tip: "Write one unit test per value class: two equal instances must be equal, have equal hash codes, and be found in a HashSet. It catches nearly every equals/hashCode bug.",
+      faq: [['What must hold for equal objects?', 'Equal hash codes.'], ['Can unequal objects share a hash code?', 'Yes; collisions are allowed.'], ['What happens if only equals is overridden?', 'Hash-based collections fail to find equal objects.'], ['Why avoid mutable keys?', 'Changing hash fields makes entries unreachable.'], ['How is String.hashCode computed?', 'Sum of s[i]·31^(n−1−i) with int overflow.']],
+      ex: { prompt: 'Write stringHash(s) computing Java\'s String.hashCode: start at 0 and for each UTF-16 char set h = 31·h + char code, using 32-bit int overflow. In JavaScript use Math.imul and | 0.', fn: 'stringHash', params: 's', sig: '(string s) -> int', java: `class Solution {
+    public int stringHash(String s) {
+        int h = 0;
+        for (int i = 0; i < s.length(); i++) h = 31 * h + s.charAt(i);
+        return h;
+    }
+}
+`, cases: [{ args: ['hello'], expect: 99162322 }, { args: [''], expect: 0 }, { args: ['Aa'], expect: 2112 }, { args: ['BB'], expect: 2112 }, { args: ['polygenelubricants'], expect: -2147483648 }], solution: `function stringHash(s){let h=0;for(let i=0;i<s.length;i++)h=(Math.imul(h,31)+s.charCodeAt(i))|0;return h}`, hint: 'Multiply by 31 and add each char, keeping 32-bit overflow.' },
+      quiz: [
+        choice('jv-oo-4-q1', 'jv-equals-hashcode', 'a.equals(b) is true. What must also be true?', ['a.hashCode() == b.hashCode()', 'a == b', 'a.toString().equals(b.toString())', 'nothing'], 0, 'Contract.'),
+        choice('jv-oo-4-q2', 'jv-equals-hashcode', 'A HashSet cannot remove an element you just added and then modified. Cause?', ['a field used in hashCode changed', 'GC', 'thread safety', 'equals is final'], 0, 'Mutable keys.'),
+        choice('jv-oo-4-q3', 'jv-equals-hashcode', 'Safe way to map a hash to a bucket in [0, n)?', ['Math.floorMod(hash, n)', 'Math.abs(hash) % n', 'hash % n', 'hash / n'], 0, 'MIN_VALUE.'),
+        fill('jv-oo-4-q4', 'jv-equals-hashcode', 'String.hashCode multiplies by the prime ___', ['31'], 'Polynomial.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l5', key: 'jv-oo-5', title: 'Ordering with Comparable and Comparator', concept: 'jv-comparators',
+      story: "Sorting looks simple until production data arrives: two customers with the same name, null dates, case differences, and a `TreeSet` that silently drops \"duplicates\" because its comparator said two different objects were equal. Java's ordering model has two parts: **natural ordering** through `Comparable.compareTo` and external orderings through `Comparator`. Java 8 made comparators composable (`Comparator.comparing(...).thenComparing(...).reversed()`), which removed most hand-written compare methods and their bugs.",
+      analogy: "Seating guests at a wedding: first by table number, then by surname within a table, then by first name, with a clear rule for anyone who has not replied.",
+      timeline: [['1998', 'Comparable and Comparator', 'Introduced with the collections framework (Java 1.2).'], ['March 2014', 'Comparator combinators', 'comparing, thenComparing, reversed, nullsFirst (Java 8).'], ['2011', 'TimSort', 'Arrays.sort for objects uses TimSort (Java 7), which detects broken comparators.'], ['2021', 'Records and comparators', 'Comparator.comparing(Person::age) on record accessors.']],
+      explain: "`compareTo` and `compare` return a negative number, zero, or a positive number. The contract requires **antisymmetry** (sign of compare(a, b) is the opposite of compare(b, a)), **transitivity**, and consistency. It is strongly recommended that ordering be **consistent with equals** (compare returns 0 exactly when equals is true); `TreeSet` and `TreeMap` use compare instead of equals, so an inconsistent comparator makes them treat distinct objects as duplicates and drop them. Build comparators declaratively: `Comparator.comparing(Employee::department).thenComparing(Employee::age, Comparator.reverseOrder()).thenComparing(Employee::name)`. Handle nulls explicitly with `Comparator.nullsFirst` or `nullsLast`. Avoid subtraction-based compare (`a - b`), which overflows for large values; use `Integer.compare`. Java's object sort (TimSort) is **stable**, so equal elements keep their input order.",
+      diagram: "sort people by age descending, then name ascending\nComparator.comparingInt(Person::age).reversed().thenComparing(Person::name)\n[Mei 30, Arjun 41, Zara 30, Bea 41] → [Arjun 41, Bea 41, Mei 30, Zara 30]\nTreeSet with compare by age only → keeps one person per age (others dropped!)",
+      ex1: ['java', 'composed comparators (Java 8)', "List<Employee> sorted = employees.stream()\n    .sorted(Comparator.comparing(Employee::getDepartment)\n        .thenComparing(Employee::getSalary, Comparator.reverseOrder())\n        .thenComparing(Employee::getName, Comparator.nullsLast(String::compareTo)))\n    .collect(Collectors.toList());"],
+      ex2: ['java', 'overflow in subtraction comparators', "Comparator<Integer> bad = (a, b) -> a - b;          // overflows: -2e9 vs 2e9\nComparator<Integer> good = Integer::compare;          // always correct"],
+      deepDive: {
+        explain: "Broken comparators fail in confusing ways. TimSort may throw `IllegalArgumentException: Comparison method violates its general contract!` when it detects inconsistency, typically caused by comparing mutable or random values, mixing nulls without a rule, or using floating-point subtraction. Sorted collections (`TreeMap`, `TreeSet`, `ConcurrentSkipListMap`) rely entirely on the comparator, so a comparator that ignores a distinguishing field merges entries. For case-insensitive or locale-aware text, use `String.CASE_INSENSITIVE_ORDER` or a `Collator` for the user's locale rather than ad hoc lowercasing. In databases, sort in SQL when you paginate: sorting a page in Java after fetching gives a different order than the database's, and the order must include a unique tiebreaker (such as id) so pages do not overlap or skip rows.",
+        example: ['js', 'age descending, then name ascending (stable ties)', "function sortPeople(names, ages) {\n  return names.map((n, i) => [n, ages[i]])\n    .sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0))\n    .map((p) => p[0]);\n}"],
+        tradeoffs: [['Approach', 'Strength', 'Weakness'], ['Comparable (natural order)', 'One obvious ordering, used by default', 'Only one per class'], ['Comparator combinators', 'Readable, composable, null handling', 'Slight overhead from method references'], ['Hand-written compare', 'Full control', 'Overflow and contract bugs'], ['Database ORDER BY', 'Consistent with pagination', 'Needs indexes and tiebreakers']],
+        failures: [['TreeSet loses customers with the same age', 'Comparator inconsistent with equals', 'Add tiebreaker fields (for example id)'], ['"Comparison method violates its general contract!"', 'Inconsistent or mutable comparison', 'Compare stable fields; handle nulls'], ['Wrong order for large numbers', 'Subtraction overflow', 'Integer.compare or comparingInt'], ['Pages repeat or skip rows', 'Non-unique ORDER BY', 'Add a unique tiebreaker column']],
+      },
+      warn: "A TreeSet or TreeMap treats objects as duplicates whenever the comparator returns 0, even if equals says they differ. Always end comparators with a unique tiebreaker for sorted collections.",
+      production: {
+        numbers: "Subtraction comparators overflow once the difference exceeds 2,147,483,647, for example comparing −2,000,000,000 with 2,000,000,000.",
+        observe: "Watch logs for 'Comparison method violates its general contract' and for sorted-collection sizes smaller than expected.",
+        security: "Ordering by user-controlled fields in queries should use an allow-list of sortable columns, never raw input concatenated into ORDER BY clauses.",
+        checklist: ['Integer.compare / comparingInt, never subtraction', 'Comparators built with combinators', 'Explicit null handling', 'Unique tiebreaker for sorted collections and pagination', 'Locale-aware text ordering where needed', 'Ordering consistent with equals where possible', 'Allow-listed sort fields in APIs'],
+        sources: ['Java SE API: Comparator, Comparable, Collections.sort (stability)', 'Bloch, "Effective Java" (3rd ed.), item 14: consider implementing Comparable', 'OpenJDK bug JDK-6804124: TimSort contract violation detection (Java 7)'],
+      },
+      tip: "End every comparator used for TreeMap keys or paginated results with a unique field such as an id. It prevents both lost entries and unstable pages.",
+      faq: [['What does compare return?', 'Negative, zero, or positive.'], ['Why avoid a - b in comparators?', 'Integer overflow gives wrong signs.'], ['What does "consistent with equals" mean?', 'compare returns 0 exactly when equals is true.'], ['Is Java\'s object sort stable?', 'Yes; equal elements keep their order.'], ['How do you sort nulls?', 'Comparator.nullsFirst or nullsLast.']],
+      ex: { prompt: 'Write sortPeople(names, ages) returning names sorted by age descending, then by name ascending (ordinal string order) for equal ages.', fn: 'sortPeople', params: 'names, ages', sig: '(string[] names, int[] ages) -> string[]', java: `class Solution {
+    public String[] sortPeople(final String[] names, final int[] ages) {
+        Integer[] idx = new Integer[names.length];
+        for (int i = 0; i < idx.length; i++) idx[i] = i;
+        Arrays.sort(idx, new Comparator<Integer>() {
+            public int compare(Integer a, Integer b) {
+                int c = Integer.compare(ages[b], ages[a]);
+                return c != 0 ? c : names[a].compareTo(names[b]);
+            }
+        });
+        String[] out = new String[names.length];
+        for (int i = 0; i < idx.length; i++) out[i] = names[idx[i]];
+        return out;
+    }
+}
+`, cases: [{ args: [['Mei', 'Arjun', 'Zara', 'Bea'], [30, 41, 30, 41]], expect: ['Arjun', 'Bea', 'Mei', 'Zara'] }, { args: [[], []], expect: [] }], solution: `function sortPeople(names,ages){return names.map((n,i)=>[n,ages[i]]).sort((a,b)=>b[1]-a[1]||(a[0]<b[0]?-1:a[0]>b[0]?1:0)).map(x=>x[0])}`, hint: 'Compare ages in reverse, then names.' },
+      quiz: [
+        choice('jv-oo-5-q1', 'jv-comparators', 'A TreeSet<Customer> ordered by surname only loses customers. Fix?', ['add tiebreakers such as id to the comparator', 'use a bigger set', 'override hashCode', 'use parallel streams'], 0, 'Consistent with equals.'),
+        choice('jv-oo-5-q2', 'jv-comparators', 'Safest comparator for int fields?', ['Comparator.comparingInt(...)', '(a, b) -> a.x - b.x', '(a, b) -> 0', 'random'], 0, 'No overflow.'),
+        choice('jv-oo-5-q3', 'jv-comparators', 'What does stable sorting guarantee?', ['equal elements keep their input order', 'no exceptions', 'O(n) time', 'nulls first'], 0, 'TimSort.'),
+        fill('jv-oo-5-q4', 'jv-comparators', 'Comparator.comparing(a).___(b) adds a secondary sort key', ['thenComparing'], 'Combinators.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l6', key: 'jv-oo-6', title: 'Enums as types and state machines', concept: 'jv-enums',
+      story: "Before Java 5, constants were `public static final int` values: `ORDER_PAID = 2` could be passed where a priority was expected, printed as a meaningless number, and broken by anyone who added a constant with the same value. Java 5 (2004) introduced **enums**, designed by Joshua Bloch and Neal Gafter as full classes: each constant is a singleton object that can hold fields, implement interfaces, and override methods. Enums became the idiomatic way to model fixed sets of values and simple state machines.",
+      analogy: "A vending machine's labelled buttons: you can only press buttons that exist, each knows what it dispenses, and pressing an invalid sequence does nothing.",
+      timeline: [['1996–2003', 'int constants', 'Type-unsafe constants and the "typesafe enum" pattern by hand.'], ['2004', 'Java 5 enums', 'Language-level enums with EnumSet and EnumMap.'], ['2014', 'Enums with lambdas', 'Behaviour passed as lambdas into enum constructors (Java 8).'], ['2023', 'Exhaustive enum switches', 'Switch expressions over enums checked for completeness (Java 14+).']],
+      explain: "An enum declares a fixed set of instances: `enum OrderStatus { PENDING, PAID, SHIPPED, DELIVERED, CANCELLED }`. Each constant is a singleton, so `==` comparison is correct and fast. Enums can have **fields and constructors** (`PAID(\"Paid\", true)`), **methods**, and **constant-specific bodies** that override an abstract method per constant. `EnumSet` and `EnumMap` are compact, fast collections backed by bit vectors and arrays. **State machines**: encode allowed transitions in the enum (a method `next(Event e)` or a map of allowed targets), reject invalid transitions explicitly, and keep side effects (emails, payments) outside the enum. Switch expressions over enums are exhaustive without `default`, so adding a constant forces callers to handle it. Persist enums by **name** (`@Enumerated(EnumType.STRING)` in JPA), never by ordinal, because reordering constants changes ordinals.",
+      diagram: "PENDING ──pay──▶ PAID ──ship──▶ SHIPPED ──deliver──▶ DELIVERED\n   │                │\n   └──cancel──▶ CANCELLED ◀──cancel──┘\nanything else ─▶ INVALID (reject, do not change state)",
+      ex1: ['java', 'an enum state machine (Java 8 compatible)', "enum OrderStatus {\n    PENDING, PAID, SHIPPED, DELIVERED, CANCELLED;\n    OrderStatus on(String event) {\n        switch (this) {\n            case PENDING: if (event.equals(\"pay\")) return PAID; if (event.equals(\"cancel\")) return CANCELLED; break;\n            case PAID:    if (event.equals(\"ship\")) return SHIPPED; if (event.equals(\"cancel\")) return CANCELLED; break;\n            case SHIPPED: if (event.equals(\"deliver\")) return DELIVERED; break;\n            default: break;\n        }\n        throw new IllegalStateException(this + \" cannot handle \" + event);\n    }\n}"],
+      ex2: ['java', 'persist by name, not ordinal', "@Enumerated(EnumType.STRING)   // stores 'PAID', not 1\nprivate OrderStatus status;"],
+      deepDive: {
+        explain: "Enums are also the simplest correct **singleton** in Java (Effective Java item 3): `enum Registry { INSTANCE; … }` is serialisation-safe and reflection-safe. Constant-specific methods turn enums into strategy tables (`Operation.PLUS.apply(a, b)`), though large behaviour belongs in separate classes. For workflows richer than a handful of states (timeouts, guards, parallel regions, audit), use a dedicated state-machine library or a workflow engine, and persist state transitions as events. Common mistakes: storing ordinals in databases or JSON, `valueOf` on untrusted input without handling `IllegalArgumentException`, adding constants in the middle of an enum used by ordinal-based code, and switch statements with `default` that silently accept new constants. Across service boundaries, unknown enum values from newer clients must be handled (Jackson's `READ_UNKNOWN_ENUM_VALUES_USING_DEFAULT_VALUE` or a tolerant reader), otherwise a deploy of a new status breaks older consumers.",
+        example: ['js', 'transition table for an order state machine', "function nextState(state, event) {\n  const t = {\n    PENDING: { pay: 'PAID', cancel: 'CANCELLED' },\n    PAID: { ship: 'SHIPPED', cancel: 'CANCELLED' },\n    SHIPPED: { deliver: 'DELIVERED' },\n  };\n  return (t[state] && t[state][event]) || 'INVALID';\n}"],
+        tradeoffs: [['Approach', 'Strength', 'Weakness'], ['Enum with transition method', 'Simple, type-safe, testable', 'Limited to small machines'], ['Transition table (EnumMap)', 'Data-driven, easy to review', 'Logic separate from states'], ['State-machine library', 'Guards, actions, persistence', 'Dependency and learning curve'], ['int or String constants', 'None worth having', 'No type safety']],
+        failures: [['Statuses scrambled after adding a constant', 'Persisted ordinals', '@Enumerated(EnumType.STRING)'], ['Cancelled order gets shipped', 'Transitions not validated', 'Reject invalid transitions in one place'], ['Older service crashes on a new status', 'Strict enum deserialisation across versions', 'Tolerant reader with unknown default'], ['400 errors on mixed-case input', 'valueOf on raw user input', 'Normalise and handle IllegalArgumentException']],
+      },
+      warn: "Never persist enums by ordinal. Inserting or reordering a constant silently changes the meaning of every stored value.",
+      production: {
+        numbers: "EnumSet stores up to 64 constants in a single long bit vector, making contains and add constant-time bit operations.",
+        observe: "Count rejected transitions per state and event; spikes reveal client bugs or race conditions such as double submissions.",
+        security: "Validate every transition server-side; never trust a client-supplied target state, or users can skip payment by jumping from PENDING to SHIPPED.",
+        checklist: ['Enums instead of int or String constants', 'Persist by name', 'Transitions validated in one place', 'Side effects outside the enum', 'No default in switches over enums', 'Tolerant handling of unknown values across services', 'EnumSet / EnumMap for enum-keyed data'],
+        sources: ['JSR 201: Enumerations (Java 5)', 'Bloch, "Effective Java" (3rd ed.), items 3, 34–38 (enums and annotations)', 'Jakarta Persistence specification: @Enumerated'],
+      },
+      tip: "Write the transition table as a unit test first: every allowed (state, event) pair and a sample of disallowed ones. The enum then has a spec it must pass.",
+      faq: [['Why are enums better than int constants?', 'Type safety, readable names, and behaviour.'], ['How should enums be persisted?', 'By name, not ordinal.'], ['Can enums have fields and methods?', 'Yes; they are full classes.'], ['Simplest correct singleton in Java?', 'A single-element enum.'], ['Where do invalid transitions get rejected?', 'Server-side, in one place.']],
+      ex: { prompt: 'Write nextState(state, event) for an order: PENDING + pay → PAID; PENDING + cancel → CANCELLED; PAID + ship → SHIPPED; PAID + cancel → CANCELLED; SHIPPED + deliver → DELIVERED. Any other combination returns "INVALID".', fn: 'nextState', params: 'state, event', sig: '(string state, string event) -> string', java: `class Solution {
+    public String nextState(String state, String event) {
+        Map<String, Map<String, String>> t = new HashMap<>();
+        t.put("PENDING", new HashMap<String, String>());
+        t.get("PENDING").put("pay", "PAID");
+        t.get("PENDING").put("cancel", "CANCELLED");
+        t.put("PAID", new HashMap<String, String>());
+        t.get("PAID").put("ship", "SHIPPED");
+        t.get("PAID").put("cancel", "CANCELLED");
+        t.put("SHIPPED", new HashMap<String, String>());
+        t.get("SHIPPED").put("deliver", "DELIVERED");
+        Map<String, String> row = t.get(state);
+        if (row == null || !row.containsKey(event)) return "INVALID";
+        return row.get(event);
+    }
+}
+`, cases: [{ args: ['PENDING', 'pay'], expect: 'PAID' }, { args: ['PAID', 'ship'], expect: 'SHIPPED' }, { args: ['SHIPPED', 'cancel'], expect: 'INVALID' }, { args: ['DELIVERED', 'pay'], expect: 'INVALID' }, { args: ['PAID', 'cancel'], expect: 'CANCELLED' }], solution: `function nextState(state,event){const t={PENDING:{pay:'PAID',cancel:'CANCELLED'},PAID:{ship:'SHIPPED',cancel:'CANCELLED'},SHIPPED:{deliver:'DELIVERED'}};return(t[state]&&t[state][event])||'INVALID'}`, hint: 'A nested lookup table with a fallback.' },
+      quiz: [
+        choice('jv-oo-6-q1', 'jv-enums', 'A new status inserted mid-enum scrambles stored orders. Cause?', ['ordinals were persisted', 'names were persisted', 'GC', 'equals'], 0, 'EnumType.STRING.'),
+        choice('jv-oo-6-q2', 'jv-enums', 'A client sends targetStatus=SHIPPED for an unpaid order. Server should...', ['validate the transition and reject it', 'accept the client value', 'log and accept', 'retry'], 0, 'Server-side rules.'),
+        choice('jv-oo-6-q3', 'jv-enums', 'Compact, fast set of enum values?', ['EnumSet', 'HashSet<String>', 'ArrayList', 'TreeMap'], 0, 'Bit vector.'),
+        fill('jv-oo-6-q4', 'jv-enums', 'Enums arrived in Java ___', ['5'], '2004.'),
+      ],
+    }),
+  ],
+  exam: [
+    choice('jv-oo-e1', 'jv-interfaces', 'A class method and an interface default have the same signature. Which runs?', ['the class method', 'the default', 'compile error', 'random'], 0, 'Class wins.'),
+    choice('jv-oo-e2', 'jv-composition', 'Main risk of extending a class you do not control?', ['dependence on its internal self-use', 'slower code', 'larger jar', 'no polymorphism'], 0, 'Fragile base class.'),
+    choice('jv-oo-e3', 'jv-immutability', 'Collections.unmodifiableList(source) after source.add(x)...', ['shows x', 'hides x', 'throws', 'copies x'], 0, 'View.'),
+    choice('jv-oo-e4', 'jv-equals-hashcode', 'Overriding equals but not hashCode breaks...', ['HashMap and HashSet lookups', 'sorting', 'serialisation only', 'nothing'], 0, 'Contract.'),
+    choice('jv-oo-e5', 'jv-comparators', 'TreeMap keys compare equal but are not equals(). Result?', ['one entry replaces the other', 'both kept', 'exception', 'sorted twice'], 0, 'Comparator rules.'),
+    choice('jv-oo-e6', 'jv-enums', 'Persist enums in JPA with...', ['@Enumerated(EnumType.STRING)', 'EnumType.ORDINAL', 'Serializable', 'hashCode'], 0, 'By name.'),
+    choice('jv-oo-e7', 'jv-equals-hashcode', 'Which pair of strings collides in Java?', ['"Aa" and "BB"', '"a" and "b"', '"ab" and "ba"', 'none can'], 0, '2112.'),
+    choice('jv-oo-e8', 'jv-interfaces', 'Why could Java 8 add stream() to Collection safely?', ['default methods', 'abstract classes', 'reflection', 'annotations'], 0, 'Evolution.'),
+    choice('jv-oo-e9', 'jv-immutability', 'Best type for dates in new code?', ['java.time classes', 'java.util.Date', 'long millis everywhere', 'String'], 0, 'Immutable.'),
+    order('jv-oo-e10', 'jv-immutability', 'Order the steps to make a class immutable.', ['Declare the class final', 'Make fields private and final', 'Copy mutable inputs in the constructor', 'Return new instances instead of setters'], 'Checklist.'),
+    order('jv-oo-e11', 'jv-enums', 'Order the happy path of the order state machine.', ['PENDING', 'PAID', 'SHIPPED', 'DELIVERED'], 'Lifecycle.'),
+    fill('jv-oo-e12', 'jv-composition', 'Code using a parent type must keep working with any subtype: the ___ substitution principle', ['Liskov'], '1987.'),
+  ],
+};

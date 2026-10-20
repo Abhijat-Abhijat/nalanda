@@ -1,0 +1,42 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Java runtime</title>
+<script src="https://cjrtnc.leaningtech.com/4.3/loader.js"></script></head>
+<body><script>
+  // Runs CheerpJ (Java 8) for the parent page: compile with ECJ, then run Main. Output is captured from the console.
+  const origin = location.origin;
+  const jar = '/app' + new URL('cheerpj/ecj-3.22.0.jar', location.href).pathname;
+  let buf = null, ready = null, n = 0;
+  const log = console.log.bind(console), err = console.error.bind(console);
+  console.log = (...a) => { if (buf) buf.out.push(a.join(' ')); else log(...a); };
+  console.error = (...a) => { if (buf) buf.err.push(a.join(' ')); else err(...a); };
+  const reply = (msg) => parent.postMessage(msg, origin);
+  addEventListener('message', async (e) => {
+    if (e.origin !== origin || !e.data || typeof e.data.id !== 'number') return;
+    const { id, type, source, dir } = e.data;
+    try {
+      ready ??= cheerpjInit({ version: 8, status: 'none' });
+      await ready;
+      if (type === 'init') return reply({ id, ok: true });
+      if (type === 'compile') {
+        const d = '/files/r' + (++n);
+        const path = '/str/Main.java'; // CheerpOS /str has no subdirectories
+        cheerpOSAddStringFile(path, source);
+        buf = { out: [], err: [] };
+        const exit = await cheerpjRunMain('org.eclipse.jdt.internal.compiler.batch.Main', jar, '-8', '-encoding', 'UTF-8', '-nowarn', '-d', d, path);
+        const text = buf.out.concat(buf.err).join('');
+        buf = null;
+        return reply({ id, ok: true, exit, dir: d, text });
+      }
+      buf = { out: [], err: [] };
+      const exit = await cheerpjRunMain('Main', dir);
+      // CheerpJ prints each write (stdout and stderr alike) as one console.log chunk that carries its own newline.
+      const out = buf.out.join(''), errText = buf.err.join('');
+      buf = null;
+      reply({ id, ok: true, exit, out, err: errText });
+    } catch (x) {
+      buf = null;
+      reply({ id, ok: false, error: String(x) });
+    }
+  });
+  reply({ type: 'frame-ready' });
+</script></body></html>

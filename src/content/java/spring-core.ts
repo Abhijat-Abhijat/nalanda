@@ -1,0 +1,290 @@
+import type { Chapter } from '../../schema';
+import { choice, fill, order } from '../helpers';
+import { deepTopic } from '../cs/h';
+
+export const sbCore: Chapter = {
+  id: 'sb-core',
+  title: 'Spring Boot core: the container and configuration',
+  summary: 'How Spring Boot assembles an application: dependency injection and bean creation order, bean scopes and lifecycle, auto-configuration and its conditions, externalised configuration and property precedence, type-safe configuration properties with relaxed binding, and the proxies behind @Transactional and @Cacheable. Versions checked as of October 2026 (Spring Boot 4.x and Spring Framework 7, GA November 2025, Java 17 baseline).',
+  lessons: [
+    deepTopic({
+      id: 'l1', key: 'sb-co-1', title: 'Dependency injection and the application context', concept: 'jv-di',
+      story: "In 2002 Rod Johnson published *Expert One-on-One J2EE Design and Development*, arguing that enterprise Java had become needlessly complex; its sample code grew into the **Spring Framework** (1.0 in March 2004). Spring's core idea, **inversion of control** through **dependency injection**, meant objects declared what they needed and a container supplied it. A decade later **Spring Boot** (1.0 in April 2014) removed most configuration with opinionated defaults. Today Spring Boot 4 and Spring Framework 7 (GA in November 2025) keep the same container at their heart.",
+      analogy: "A theatre's stage manager: actors do not fetch their own props or co-stars; the stage manager hands each actor exactly what the script says they need, in the right order, before the curtain rises.",
+      timeline: [['2002', 'Expert One-on-One J2EE', 'Rod Johnson\'s book and framework code.'], ['March 2004', 'Spring Framework 1.0', 'IoC container, AOP, transactions.'], ['April 2014', 'Spring Boot 1.0', 'Auto-configuration and starters.'], ['November 2025', 'Spring Boot 4 / Spring Framework 7', 'Java 17 baseline, Jakarta EE 11.']],
+      explain: "The **application context** creates and wires **beans**: objects registered by component scanning (`@Component`, `@Service`, `@Repository`, `@Controller`) or by `@Bean` methods in `@Configuration` classes. Prefer **constructor injection** (with a single constructor, `@Autowired` is optional): dependencies are explicit, fields can be `final`, objects are fully initialised, and tests can construct them without Spring. The container builds a dependency graph and creates beans so that **dependencies exist before dependents**. A **circular dependency** between constructors cannot be satisfied and fails at startup; Spring Boot disallows circular references by default since 2.6, which is good, because cycles usually signal a design problem. When several beans match a type, disambiguate with `@Primary`, `@Qualifier`, or by injecting `List<T>` to receive all implementations. Keep beans **stateless** where possible, since the default scope is a singleton shared by all threads.",
+      diagram: "orderController → orderService → orderRepository → dataSource\ncreation order: dataSource, orderRepository, orderService, orderController\na → b and b → a with constructor injection → startup fails (circular reference)",
+      ex1: ['java', 'constructor injection', "@Service\npublic class OrderService {\n    private final OrderRepository orders;\n    private final PaymentGateway payments;\n\n    public OrderService(OrderRepository orders, PaymentGateway payments) {   // no @Autowired needed\n        this.orders = orders;\n        this.payments = payments;\n    }\n}"],
+      ex2: ['java', 'choosing among several implementations', "@Bean @Primary PaymentGateway stripeGateway() { … }\n@Bean PaymentGateway sandboxGateway() { … }\n\npublic Checkout(@Qualifier(\"sandboxGateway\") PaymentGateway gw) { … }\npublic Router(List<PaymentGateway> all) { … }   // every implementation"],
+      deepDive: {
+        explain: "Field injection (`@Autowired` on fields) hides dependencies, prevents `final`, and requires reflection or Spring in tests; setter injection suits optional dependencies only. A constructor with many parameters is a useful smell: the class probably has too many responsibilities. Startup performance depends on how much the context does: component scanning of broad packages, eager initialisation of heavy beans, and many auto-configurations all add time; lazy initialisation (`spring.main.lazy-initialization=true`) speeds startup but moves failures to the first request. Spring's AOT processing (for GraalVM native images and the JVM's AOT caches) pre-computes much of the context. For tests, construct services directly with fakes for unit tests, and use Spring test slices (covered later) when you need part of the context.",
+        example: ['js', 'bean creation order, failing on cycles', "function creationOrder(beans, deps) {             // deps like 'orderService>orderRepository'\n  const g = {};\n  for (const d of deps) { const [a, b] = d.split('>'); (g[a] = g[a] || []).push(b); }\n  const state = {}, out = []; let cycle = false;\n  const visit = (b) => {\n    if (state[b] === 2) return;\n    if (state[b] === 1) { cycle = true; return; }       // currently being created → circular\n    state[b] = 1;\n    for (const n of g[b] || []) visit(n);\n    state[b] = 2; out.push(b);\n  };\n  for (const b of beans) visit(b);\n  return cycle ? ['CYCLE'] : out;\n}"],
+        tradeoffs: [['Injection style', 'Strength', 'Weakness'], ['Constructor', 'Explicit, final fields, easy tests', 'Long constructors reveal big classes'], ['Field', 'Short', 'Hidden dependencies; hard to test'], ['Setter', 'Optional dependencies', 'Partially initialised objects'], ['Method injection / ObjectProvider', 'Lazy or optional lookup', 'More indirection']],
+        failures: [['Startup fails: circular reference', 'Constructor cycle between beans', 'Extract a third bean or events; rethink responsibilities'], ['NoUniqueBeanDefinitionException', 'Two beans of one type', '@Primary, @Qualifier, or List injection'], ['NullPointerException in tests', 'Field injection without Spring', 'Constructor injection'], ['Data mixing between requests', 'Mutable state in a singleton bean', 'Stateless beans; request-scoped data in parameters']],
+      },
+      warn: "Singleton beans are shared by every request thread. Never store per-request or per-user data in fields of a singleton service.",
+      production: {
+        numbers: "A typical Spring Boot service creates hundreds of beans at startup; startup time from one to tens of seconds is common, and AOT processing and CDS can cut it noticeably.",
+        observe: "Use the startup actuator endpoint or ApplicationStartup with JFR to find slow beans; watch startup time trends in CI.",
+        security: "Avoid wiring security-critical behaviour through ambiguous bean selection; make the chosen implementation explicit with qualifiers and tests.",
+        checklist: ['Constructor injection with final fields', 'Stateless singleton services', 'No circular dependencies', 'Explicit selection among implementations', 'Narrow component-scan packages', 'Unit tests without the container', 'Startup time monitored'],
+        sources: ['Spring Framework reference: The IoC Container (version 7)', 'Johnson, "Expert One-on-One J2EE Design and Development" (2002)', 'InfoQ, "Spring Framework 7 and Spring Boot 4 released" (November 2025)'],
+      },
+      tip: "If a constructor needs more than five or six collaborators, split the class before adding the seventh. The container is telling you something.",
+      faq: [['Why prefer constructor injection?', 'Explicit, immutable dependencies and easy testing.'], ['Default bean scope?', 'Singleton.'], ['What happens with constructor cycles?', 'Startup fails with a circular reference error.'], ['How do you choose between two beans of the same type?', '@Primary or @Qualifier.'], ['When did Spring Boot 4 go GA?', 'November 2025.']],
+      ex: { prompt: 'Write creationOrder(beans, deps) where deps are "a>b" (bean a needs bean b). Visit beans in the given order, depth-first, creating dependencies (in declared order) before the bean, each bean once. If a cycle is found, return ["CYCLE"].', fn: 'creationOrder', params: 'beans, deps', sig: '(string[] beans, string[] deps) -> string[]', java: `class Solution {
+    Map<String, List<String>> g = new HashMap<>();
+    Map<String, Integer> state = new HashMap<>();
+    List<String> out = new ArrayList<>();
+    boolean cycle = false;
+    void visit(String b) {
+        Integer s = state.get(b);
+        if (s != null && s == 2) return;
+        if (s != null && s == 1) { cycle = true; return; }
+        state.put(b, 1);
+        List<String> next = g.get(b);
+        if (next != null) for (String n : next) visit(n);
+        state.put(b, 2);
+        out.add(b);
+    }
+    public String[] creationOrder(String[] beans, String[] deps) {
+        for (String d : deps) {
+            String[] p = d.split(">");
+            if (!g.containsKey(p[0])) g.put(p[0], new ArrayList<String>());
+            g.get(p[0]).add(p[1]);
+        }
+        for (String b : beans) visit(b);
+        return cycle ? new String[] { "CYCLE" } : out.toArray(new String[0]);
+    }
+}
+`, cases: [{ args: [['orderController', 'orderService', 'orderRepository', 'dataSource'], ['orderController>orderService', 'orderService>orderRepository', 'orderRepository>dataSource']], expect: ['dataSource', 'orderRepository', 'orderService', 'orderController'] }, { args: [['a', 'b'], ['a>b', 'b>a']], expect: ['CYCLE'] }, { args: [['x'], []], expect: ['x'] }], solution: `function creationOrder(beans,deps){const g={};for(const d of deps){const[a,b]=d.split('>');(g[a]=g[a]||[]).push(b)}const state={},out=[];let cycle=false;const visit=b=>{if(state[b]===2)return;if(state[b]===1){cycle=true;return}state[b]=1;for(const n of g[b]||[])visit(n);state[b]=2;out.push(b)};for(const b of beans)visit(b);return cycle?['CYCLE']:out}`, hint: 'Depth-first with a "being created" marker to catch cycles.' },
+      quiz: [
+        choice('jv-di-q1', 'jv-di', 'Startup fails: "The dependencies of some of the beans form a cycle". Best fix?', ['restructure responsibilities to break the cycle', 'allow circular references globally', 'switch to field injection', 'make beans prototype'], 0, 'Design smell.'),
+        choice('jv-di-q2', 'jv-di', 'Which injection style lets fields be final?', ['constructor', 'field', 'setter', 'none'], 0, 'Immutable.'),
+        choice('jv-di-q3', 'jv-di', 'Two PaymentGateway beans exist. Default choice for most injections?', ['mark one @Primary', 'delete one', 'use reflection', 'nothing'], 0, 'Disambiguate.'),
+        fill('jv-di-q4', 'jv-di', 'Spring\'s container is the application ___', ['context'], 'Beans.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l2', key: 'sb-co-2', title: 'Bean scopes and lifecycle', concept: 'jv-bean-scopes',
+      story: "A classic Spring production bug: a developer stores the current user in a field of a `@Service`, tests pass with one user, and in production users start seeing each other's data. The service was a **singleton**, shared by every request thread. Spring's **scopes** decide how many instances exist and for how long; understanding them, plus the **lifecycle callbacks** that run when beans are created and destroyed, prevents data leaks and resource leaks alike.",
+      analogy: "A company's resources: one shared printer for everyone (singleton), a new notepad for each person who asks (prototype), and a visitor badge valid only for a single visit (request scope).",
+      timeline: [['2004', 'Singleton and prototype', 'Core scopes in Spring 1.0.'], ['2006', 'Web scopes', 'request and session scopes (Spring 2.0).'], ['2017', 'Reactive and functional registration', 'Spring 5 adds functional bean registration.'], ['2022', 'Jakarta annotations', '@PostConstruct moves to jakarta.annotation (Boot 3).']],
+      explain: "**Singleton** (default): one instance per application context, created at startup (unless lazy), shared by all threads: must be stateless or thread-safe. **Prototype**: a new instance **every time** the bean is requested or injected; Spring does not manage its destruction. **Request**: one instance per HTTP request; **session**: one per HTTP session; **application**: one per servlet context. Injecting a shorter-lived bean into a singleton needs a **scoped proxy** (`@RequestScope` creates one by default) or an `ObjectProvider` lookup, otherwise the singleton captures one instance forever. **Lifecycle**: constructor, dependency injection, `@PostConstruct` (or `InitializingBean`), use, then `@PreDestroy` (or `DisposableBean`) at shutdown for singletons. Spring Boot shuts down **gracefully** by default (in recent versions), letting in-flight requests finish before destroying beans.",
+      diagram: "scope        instances for 5 injections and 100 requests\nsingleton    1\nprototype    5   (one per injection)\nrequest      100 (one per HTTP request)\nlifecycle: construct → inject → @PostConstruct → use → @PreDestroy (singletons)",
+      ex1: ['java', 'a request-scoped bean injected into a singleton', "@Component @RequestScope                   // scoped proxy created automatically\nclass RequestContext { String tenantId; }\n\n@Service\nclass ReportService {\n    private final RequestContext ctx;          // proxy: resolves the current request's instance\n    ReportService(RequestContext ctx) { this.ctx = ctx; }\n}"],
+      ex2: ['java', 'lifecycle callbacks', "@Component\nclass PriceFeed {\n    private ScheduledExecutorService exec;\n    @PostConstruct void start() { exec = Executors.newSingleThreadScheduledExecutor(); … }\n    @PreDestroy void stop() { exec.shutdown(); }      // release resources at shutdown\n}"],
+      deepDive: {
+        explain: "Prototype beans injected into a singleton are created only once, at injection time, which surprises people expecting a fresh instance per call; use `ObjectProvider<T>.getObject()` or method injection for that. Request and session scopes rely on thread-bound request context, so they fail in background threads, `@Async` methods, and some reactive code; pass needed data explicitly instead. Session-scoped beans must be serialisable if sessions are replicated or persisted, and they cost memory per user. Prototype beans with resources (connections, executors) leak, because Spring does not call their destroy methods. With virtual threads, thread-bound context still works per request, but avoid ThreadLocal-based caching inside beans (see the virtual threads chapter).",
+        example: ['js', 'instances created per scope', "function instancesCreated(scope, injections, requests) {\n  if (scope === 'singleton') return 1;\n  if (scope === 'prototype') return injections;\n  if (scope === 'request') return requests;\n  return 0;\n}"],
+        tradeoffs: [['Scope', 'Use', 'Risk'], ['Singleton', 'Stateless services, repositories, clients', 'Shared mutable state'], ['Prototype', 'Stateful helpers per use', 'Unmanaged destruction; surprising injection'], ['Request', 'Per-request context', 'Unavailable in background threads'], ['Session', 'Per-user web state', 'Memory; serialisation; scaling']],
+        failures: [['Users see each other\'s data', 'Per-user field in a singleton', 'Pass data as parameters; request scope'], ['Prototype bean behaves like a singleton', 'Injected once into a singleton', 'ObjectProvider.getObject()'], ['"No thread-bound request found"', 'Request-scoped bean used in @Async', 'Pass values explicitly'], ['Threads or connections never closed', 'Missing @PreDestroy or prototype resources', 'Close in @PreDestroy; avoid prototype resources']],
+      },
+      warn: "Storing user or request data in a field of a singleton bean leaks it between concurrent users. It is a data-protection incident, not just a bug.",
+      production: {
+        numbers: "For 5 injections and 100 requests: singleton creates 1 instance, prototype 5, request scope 100.",
+        observe: "Code review rule: no mutable non-final fields in @Service, @Component, and @Controller classes unless explicitly thread-safe; static analysis can enforce it.",
+        security: "Cross-user data exposure through shared singleton state has caused real breaches; keep request and user data request-scoped or in method parameters.",
+        checklist: ['Singletons stateless or thread-safe', 'Request data passed explicitly or request-scoped', 'ObjectProvider for fresh prototypes', 'Resources released in @PreDestroy', 'No request scope in background threads', 'Session beans small and serialisable', 'Graceful shutdown configured'],
+        sources: ['Spring Framework reference: Bean Scopes and Lifecycle Callbacks', 'Spring Boot reference: Graceful Shutdown', 'Jakarta Annotations specification: @PostConstruct, @PreDestroy'],
+      },
+      tip: "Grep your services for non-final fields. Each one is either injected configuration that should be final, or a concurrency bug waiting to happen.",
+      faq: [['Default bean scope?', 'Singleton.'], ['How many prototype instances for five injections?', 'Five.'], ['How do you use a request-scoped bean in a singleton?', 'Through a scoped proxy or ObjectProvider.'], ['When does @PreDestroy run?', 'At context shutdown, for singletons.'], ['Does Spring destroy prototype beans?', 'No.']],
+      ex: { prompt: 'Write instancesCreated(scope, injections, requests) returning how many instances exist: "singleton" → 1, "prototype" → injections, "request" → requests, anything else → 0.', fn: 'instancesCreated', params: 'scope, injections, requests', sig: '(string scope, int injections, int requests) -> int', java: `class Solution {
+    public int instancesCreated(String scope, int injections, int requests) {
+        if (scope.equals("singleton")) return 1;
+        if (scope.equals("prototype")) return injections;
+        if (scope.equals("request")) return requests;
+        return 0;
+    }
+}
+`, cases: [{ args: ['singleton', 5, 100], expect: 1 }, { args: ['prototype', 5, 100], expect: 5 }, { args: ['request', 5, 100], expect: 100 }], solution: `function instancesCreated(s,i,r){if(s==='singleton')return 1;if(s==='prototype')return i;if(s==='request')return r;return 0}`, hint: 'One branch per scope.' },
+      quiz: [
+        choice('jv-bean-scopes-q1', 'jv-bean-scopes', 'A @Service keeps currentUser in a field. Risk?', ['users see each other\'s data under concurrency', 'none', 'slower startup', 'compile error'], 0, 'Shared singleton.'),
+        choice('jv-bean-scopes-q2', 'jv-bean-scopes', 'A prototype bean injected into a singleton constructor is created...', ['once', 'per method call', 'per request', 'never'], 0, 'At injection.'),
+        choice('jv-bean-scopes-q3', 'jv-bean-scopes', 'Where should a scheduled executor be shut down?', ['@PreDestroy', '@PostConstruct', 'constructor', 'finalize'], 0, 'Lifecycle.'),
+        fill('jv-bean-scopes-q4', 'jv-bean-scopes', 'One instance per HTTP request is the ___ scope', ['request'], 'Web scope.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l3', key: 'sb-co-3', title: 'Auto-configuration and conditions', concept: 'jv-autoconfig',
+      story: "Spring Boot's signature trick is that adding `spring-boot-starter-data-jpa` and a PostgreSQL driver to a project produces a working `DataSource`, `EntityManagerFactory`, and transaction manager without any configuration. Behind it are hundreds of **auto-configuration** classes, each guarded by **conditions** such as \"this class is on the class path\" and \"the user has not defined their own bean\". When auto-configuration surprises you, the conditions evaluation report explains exactly why each piece did or did not apply.",
+      analogy: "A hotel room set up based on your booking: if you booked with a child, a cot appears; if you brought your own pillow, they do not add theirs; and the minibar is stocked only if you opted in.",
+      timeline: [['2014', 'Auto-configuration', 'Spring Boot 1.0 with @Conditional-based configuration.'], ['2014', 'Starters', 'Curated dependency sets such as spring-boot-starter-web.'], ['2022', 'AutoConfiguration.imports', 'New registration file replaces spring.factories for auto-configuration (Boot 2.7, required in 3.0).'], ['2025', 'Boot 4 modularisation', 'Auto-configuration split into smaller focused modules.']],
+      explain: "An auto-configuration class is a `@AutoConfiguration` class listed in `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`. Its `@Bean` methods are guarded by **conditions**: `@ConditionalOnClass` (a library is on the class path), `@ConditionalOnMissingBean` (**back off** if the user defined their own bean), `@ConditionalOnProperty` (a property has a given value, for example `feature.x.enabled=true`), `@ConditionalOnBean`, `@ConditionalOnWebApplication`, and more. User configuration is processed **before** auto-configuration, so your `@Bean` wins and the default **backs off**. Customise without replacing: set properties (`spring.datasource.*`), or provide customiser beans (`WebMvcConfigurer`, `Jackson2ObjectMapperBuilderCustomizer`, and their Boot 4 equivalents). Exclude unwanted auto-configurations with `spring.autoconfigure.exclude`. Run with `--debug` (or `debug=true`) to print the **conditions evaluation report**, or use the `conditions` actuator endpoint.",
+      diagram: "DataSourceAutoConfiguration\n  @ConditionalOnClass(DataSource, EmbeddedDatabaseType)   driver on class path?  ✓\n  @ConditionalOnMissingBean(DataSource)                    user defined one?      ✗ → back off\n  @ConditionalOnProperty(\"app.feature.enabled\", havingValue=\"true\")\napplies only if every condition holds",
+      ex1: ['java', 'writing your own auto-configuration', "@AutoConfiguration\n@ConditionalOnClass(AuditClient.class)\n@EnableConfigurationProperties(AuditProperties.class)\npublic class AuditAutoConfiguration {\n    @Bean\n    @ConditionalOnMissingBean                                      // users can override\n    @ConditionalOnProperty(prefix = \"audit\", name = \"enabled\", havingValue = \"true\", matchIfMissing = true)\n    AuditClient auditClient(AuditProperties props) { return new AuditClient(props.url()); }\n}"],
+      ex2: ['text', 'why did (or didn\'t) it apply?', "java -jar app.jar --debug\n# CONDITIONS EVALUATION REPORT\n# Positive matches: DataSourceAutoConfiguration matched …\n# Negative matches: MongoAutoConfiguration: Did not match: @ConditionalOnClass did not find 'com.mongodb.client.MongoClient'"],
+      deepDive: {
+        explain: "Auto-configuration is just ordinary Spring configuration with conditions and ordering (`@AutoConfiguration(after = …)`). Companies build internal **starters** (an auto-configuration module plus a starter POM) to standardise logging, security, tracing, and clients across services; follow the same rules: back off with `@ConditionalOnMissingBean`, bind settings with `@ConfigurationProperties`, and document properties. Surprises usually come from dependencies: adding a library can activate configuration you did not expect (for example a second `DataSource` or Spring Security's default login page). The conditions report and the `beans` actuator endpoint make this visible. Too many auto-configurations slow startup; Boot 4's modular auto-configuration and excluding unused ones help. Avoid defining beans that partially duplicate auto-configured ones; either customise through properties and customisers or replace the bean fully.",
+        example: ['js', 'does an auto-configured bean apply?', "function autoConfigApplies(classPresent, userBeanDefined, propertyValue, havingValue) {\n  return classPresent                       // @ConditionalOnClass\n    && !userBeanDefined                     // @ConditionalOnMissingBean: back off\n    && (havingValue === '' || propertyValue === havingValue);   // @ConditionalOnProperty\n}"],
+        tradeoffs: [['Customisation', 'Strength', 'Weakness'], ['Properties', 'Simplest, documented', 'Limited to exposed settings'], ['Customiser beans', 'Adjust auto-configured objects', 'Must know the customiser type'], ['Replace the bean', 'Full control', 'Lose Boot defaults and tuning'], ['Exclude auto-configuration', 'Remove unwanted features', 'May need to recreate parts manually']],
+        failures: [['Login page appears after adding a dependency', 'Spring Security auto-configuration activated', 'Configure a SecurityFilterChain deliberately'], ['Two DataSources conflict', 'Custom bean plus auto-configuration on a different type', 'Replace fully or use @Primary'], ['Property seems ignored', 'Auto-configuration backed off due to a user bean', 'Check the conditions report'], ['Slow startup', 'Many unused auto-configurations', 'Exclude unused; trim dependencies']],
+      },
+      warn: "Adding a dependency can change runtime behaviour through auto-configuration, for example enabling security, a database connection, or metrics exporters. Review the conditions report after dependency changes.",
+      production: {
+        numbers: "Spring Boot ships well over a hundred auto-configuration classes; a typical web service activates a few dozen of them, visible in the conditions report.",
+        observe: "Use the conditions and beans actuator endpoints (secured) to see what was configured in each environment.",
+        security: "Never expose the conditions, beans, or env actuator endpoints publicly; they reveal internals and configuration.",
+        checklist: ['Conditions report checked after dependency changes', 'Customise via properties and customisers first', 'Internal starters back off with ConditionalOnMissingBean', 'Unused auto-configurations excluded', 'Actuator diagnostics secured', 'Custom auto-config registered in AutoConfiguration.imports', 'Properties documented'],
+        sources: ['Spring Boot reference: Auto-configuration and Creating Your Own Auto-configuration', 'Spring Boot 2.7 release notes: AutoConfiguration.imports', 'Spring Boot 4.0 release notes: modular auto-configuration (November 2025)'],
+      },
+      tip: "When Boot does something surprising, run with --debug and search the conditions report for the class involved. It names the exact condition that matched or failed.",
+      faq: [['What does @ConditionalOnMissingBean do?', 'Backs off if the user has defined a bean of that type.'], ['Where are auto-configurations registered?', 'META-INF/spring/…AutoConfiguration.imports.'], ['How do you see why an auto-configuration applied?', 'The conditions evaluation report (--debug).'], ['Preferred way to customise auto-configuration?', 'Properties and customiser beans.'], ['How do you disable one?', 'spring.autoconfigure.exclude.']],
+      ex: { prompt: 'Write autoConfigApplies(classPresent, userBeanDefined, propertyValue, havingValue) returning true only if classPresent, the user has not defined the bean, and either havingValue is "" (no property condition) or propertyValue equals havingValue.', fn: 'autoConfigApplies', params: 'classPresent, userBeanDefined, propertyValue, havingValue', sig: '(bool classPresent, bool userBeanDefined, string propertyValue, string havingValue) -> bool', java: `class Solution {
+    public boolean autoConfigApplies(boolean classPresent, boolean userBeanDefined, String propertyValue, String havingValue) {
+        return classPresent && !userBeanDefined && (havingValue.isEmpty() || propertyValue.equals(havingValue));
+    }
+}
+`, cases: [{ args: [true, false, '', ''], expect: true }, { args: [true, true, '', ''], expect: false }, { args: [false, false, '', ''], expect: false }, { args: [true, false, 'false', 'true'], expect: false }, { args: [true, false, 'true', 'true'], expect: true }], solution: `function autoConfigApplies(c,u,p,h){return c&&!u&&(h===''||p===h)}`, hint: 'All three conditions must hold.' },
+      quiz: [
+        choice('jv-autoconfig-q1', 'jv-autoconfig', 'You define your own ObjectMapper bean. Boot\'s default ObjectMapper...', ['backs off', 'still wins', 'merges with yours', 'causes a startup failure always'], 0, 'MissingBean.'),
+        choice('jv-autoconfig-q2', 'jv-autoconfig', 'How do you learn why MongoAutoConfiguration did not apply?', ['run with --debug and read the conditions report', 'guess', 'decompile Boot', 'restart twice'], 0, 'Report.'),
+        choice('jv-autoconfig-q3', 'jv-autoconfig', 'Preferred way to change the server port?', ['server.port property', 'replace the web server bean', 'exclude auto-configuration', 'edit Boot source'], 0, 'Properties first.'),
+        fill('jv-autoconfig-q4', 'jv-autoconfig', 'A class on the class path is checked with @ConditionalOn___', ['Class'], 'Libraries.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l4', key: 'sb-co-4', title: 'Externalised configuration and precedence', concept: 'jv-config-precedence',
+      story: "The Twelve-Factor App manifesto (Heroku, 2011) argued that configuration belongs in the environment, not in code, so the same build can run in development, staging, and production. Spring Boot implements this with a layered **property source** model: values can come from command-line arguments, environment variables, profile-specific files, `application.yml`, config servers, and defaults, with a precisely defined **precedence**. Most \"my property is ignored\" questions are precedence questions.",
+      analogy: "A chain of command for instructions: the manager's direct order on the day overrides the team handbook, which overrides the company's general defaults.",
+      timeline: [['2011', 'Twelve-Factor App', 'Store config in the environment.'], ['2014', 'Boot property sources', 'Ordered PropertySources and application.properties.'], ['2020', 'Config data API', 'spring.config.import and new profile handling (Boot 2.4).'], ['2020s', 'Kubernetes config', 'ConfigMaps, Secrets, and config trees supported.']],
+      explain: "Spring Boot merges many **property sources** into one `Environment`; when the same key appears in several, the **higher-precedence** source wins. Simplified order, highest first: **command-line arguments** (`--server.port=9000`), **Java system properties** (`-Dserver.port=9000`), **OS environment variables** (`SERVER_PORT=9000`), **profile-specific** files (`application-prod.yml`), the main **application** file (`application.yml`), and finally **defaults** set in code. Files inside the JAR are overridden by files outside it (for example `./config/application.yml`). **Profiles** (`spring.profiles.active=prod`) activate profile-specific files and `@Profile` beans. `spring.config.import` pulls in extra sources such as Kubernetes config trees or a config server. Secrets should come from a secret manager or platform secrets (Kubernetes Secrets, Vault, cloud secret managers), never from committed files. Inspect the resolved values with the `env` and `configprops` actuator endpoints (secured).",
+      diagram: "highest  command line        --server.port=9090\n         system properties   -Dserver.port=…\n         environment         SERVER_PORT=9090\n         profile file        application-prod.yml\n         application file    application.yml: server.port=8080\nlowest   defaults\nresolved server.port = highest source present",
+      ex1: ['yaml', 'base and profile-specific files', "# application.yml\nserver:\n  port: 8080\nspring:\n  datasource:\n    url: jdbc:postgresql://localhost/app\n---\n# application-prod.yml\nspring:\n  datasource:\n    url: jdbc:postgresql://prod-db/app"],
+      ex2: ['text', 'overriding in a container', "docker run -e SPRING_PROFILES_ACTIVE=prod -e SERVER_PORT=9090 orders:1.4.2\n# environment variables beat application.yml and application-prod.yml"],
+      deepDive: {
+        explain: "Precedence surprises: an environment variable left over in a deployment template silently overrides a changed YAML value; a profile-specific file overrides the base file even for keys you thought you changed in the base file; and multi-document YAML with `spring.config.activate.on-profile` sections applies in document order. Keep configuration **per environment in the platform** (environment variables, ConfigMaps) and **defaults in the code base**; avoid many profile files that drift. Validate configuration at startup (next lesson) so a missing or malformed value fails fast instead of failing on the first request. For dynamic changes without restart, Spring Cloud Config or Kubernetes reloads exist, but most teams prefer immutable configuration with rolling restarts for predictability. Treat configuration changes like code changes: reviewed, versioned, and auditable.",
+        example: ['js', 'resolve a property from multiple sources by precedence', "function resolveProperty(entries) {            // entries like 'envVar:9090'\n  const order = ['commandLine', 'systemProperty', 'envVar', 'profileFile', 'applicationFile', 'default'];\n  let best = null, bestRank = Infinity;\n  for (const e of entries) {\n    const i = e.indexOf(':'), source = e.slice(0, i), value = e.slice(i + 1);\n    const rank = order.indexOf(source);\n    if (rank >= 0 && rank < bestRank) { bestRank = rank; best = value; }\n  }\n  return best;\n}"],
+        tradeoffs: [['Source', 'Good for', 'Risk'], ['application.yml in the JAR', 'Defaults', 'Rebuild to change'], ['Profile files', 'Environment differences', 'Drift and duplication'], ['Environment variables', 'Per-deployment values in containers', 'Hidden overrides'], ['Secret managers', 'Credentials', 'Integration setup']],
+        failures: [['YAML change has no effect', 'Environment variable overrides it', 'Check the env actuator endpoint; remove the stale variable'], ['Production uses the dev database', 'Wrong or missing active profile', 'Fail startup when required properties are missing'], ['Password visible in Git history', 'Secret committed to a properties file', 'Rotate; use secret managers'], ['Different behaviour per pod', 'Configuration drift between deployments', 'Single source per environment; GitOps']],
+      },
+      warn: "Never commit passwords, API keys, or tokens to application.yml or profile files. Load them from a secret manager or platform secrets, and rotate anything that leaked.",
+      production: {
+        numbers: "With server.port set to 8080 in application.yml and SERVER_PORT=9090 in the environment, the service listens on 9090: environment variables rank above files.",
+        observe: "Log active profiles at startup, expose resolved (sanitised) configuration through secured actuator endpoints, and diff configuration between environments.",
+        security: "Actuator env and configprops endpoints sanitise known secret keys, but must still be restricted to administrators; never expose them publicly.",
+        checklist: ['Defaults in code, environment values in the platform', 'Secrets from a secret manager', 'Active profiles logged at startup', 'Startup validation of required properties', 'Few profile files', 'env/configprops endpoints secured', 'Configuration changes reviewed and versioned'],
+        sources: ['Spring Boot reference: Externalized Configuration (property source order)', 'Wiggins, "The Twelve-Factor App" (2011): III. Config', 'Spring Boot 2.4 release notes: config data processing'],
+      },
+      tip: "When a property behaves unexpectedly, open the env actuator endpoint in a safe environment: it lists every source and which one supplied the winning value.",
+      faq: [['Which wins: environment variable or application.yml?', 'The environment variable.'], ['Which wins: command line or environment variable?', 'The command line.'], ['How do profiles affect configuration?', 'They activate application-{profile} files and @Profile beans.'], ['Where should secrets come from?', 'Secret managers or platform secrets.'], ['How do you see resolved configuration?', 'The env and configprops actuator endpoints (secured).']],
+      ex: { prompt: 'Write resolveProperty(entries) where each entry is "source:value" (split at the first ":"). Sources in precedence order, highest first: commandLine, systemProperty, envVar, profileFile, applicationFile, default. Return the value from the highest-precedence source present, or null if none.', fn: 'resolveProperty', params: 'entries', sig: '(string[] entries) -> string?', java: `class Solution {
+    public String resolveProperty(String[] entries) {
+        List<String> order = Arrays.asList("commandLine", "systemProperty", "envVar", "profileFile", "applicationFile", "default");
+        String best = null;
+        int bestRank = Integer.MAX_VALUE;
+        for (String e : entries) {
+            int i = e.indexOf(':');
+            int rank = order.indexOf(e.substring(0, i));
+            if (rank >= 0 && rank < bestRank) { bestRank = rank; best = e.substring(i + 1); }
+        }
+        return best;
+    }
+}
+`, cases: [{ args: [['applicationFile:8080', 'envVar:9090', 'default:80']], expect: '9090' }, { args: [['profileFile:jdbc:postgresql://prod/db', 'applicationFile:jdbc:h2:mem']], expect: 'jdbc:postgresql://prod/db' }, { args: [[]], expect: null }], solution: `function resolveProperty(entries){const order=['commandLine','systemProperty','envVar','profileFile','applicationFile','default'];let best=null,bi=99;for(const e of entries){const i=e.indexOf(':');const r=order.indexOf(e.slice(0,i));if(r>=0&&r<bi){bi=r;best=e.slice(i+1)}}return best}`, hint: 'Split at the first colon only; values may contain colons.' },
+      quiz: [
+        choice('jv-config-precedence-q1', 'jv-config-precedence', 'application.yml sets port 8080, the pod sets SERVER_PORT=9090. Port?', ['9090', '8080', 'random', 'startup fails'], 0, 'Env wins.'),
+        choice('jv-config-precedence-q2', 'jv-config-precedence', 'Best place for the production database password?', ['a secret manager or platform secret', 'application-prod.yml in Git', 'a code constant', 'README'], 0, 'Secrets.'),
+        choice('jv-config-precedence-q3', 'jv-config-precedence', 'Which activates application-prod.yml?', ['spring.profiles.active=prod', 'server.profile=prod', 'renaming the JAR', 'debug=true'], 0, 'Profiles.'),
+        fill('jv-config-precedence-q4', 'jv-config-precedence', 'Twelve-Factor says config belongs in the ___', ['environment'], 'Not code.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l5', key: 'sb-co-5', title: 'Type-safe configuration properties and relaxed binding', concept: 'jv-config-properties',
+      story: "Scattering `@Value(\"${payment.retry.max-attempts}\")` strings across a code base works until someone renames a property, mistypes a key, or needs a list of servers. Spring Boot's `@ConfigurationProperties` binds a whole tree of properties to a typed object (now often a Java **record**), validates it at startup, documents it through generated metadata for IDE auto-completion, and applies **relaxed binding** so the same property can be written as `max-attempts` in YAML or `MAXATTEMPTS` in an environment variable.",
+      analogy: "A typed order form instead of sticky notes: every field is labelled, validated when submitted, and can be filled in by hand or by a machine using a slightly different spelling.",
+      timeline: [['2014', '@ConfigurationProperties', 'Typed binding in Spring Boot 1.0.'], ['2018', 'Binder rewrite', 'Relaxed binding rules formalised (Boot 2.0).'], ['2020', 'Constructor binding', 'Immutable properties classes (Boot 2.2+).'], ['2022', 'Records by default', 'Constructor binding without annotation for single-constructor types (Boot 3).']],
+      explain: "Declare a properties type with a prefix: `@ConfigurationProperties(\"payment\") record PaymentProperties(@NotNull URI url, @Min(1) int maxAttempts, Duration timeout, List<String> regions) {}` and enable it with `@ConfigurationPropertiesScan` or `@EnableConfigurationProperties`. Add `@Validated` to fail **at startup** when values are missing or invalid. Boot converts strings to `Duration` (`5s`, `250ms`), `DataSize` (`10MB`), enums, URIs, lists, and maps. **Relaxed binding** maps different spellings to the same property: in files use kebab case (`payment.max-attempts`); in **environment variables**, replace dots with underscores, remove dashes, and use upper case (`PAYMENT_MAXATTEMPTS`); list indexes become underscores around the number (`PAYMENT_REGIONS_0_`… is written `PAYMENT_REGIONS_0`). The annotation processor `spring-boot-configuration-processor` generates metadata so IDEs auto-complete and document your properties.",
+      diagram: "file key                      environment variable\nspring.datasource.url    →    SPRING_DATASOURCE_URL\nmy-app.retry-count       →    MYAPP_RETRYCOUNT\nmy.servers[0].host       →    MY_SERVERS_0_HOST\nrules: '.' → '_', remove '-', '[n]' → '_n', upper case",
+      ex1: ['java', 'a validated, immutable properties record', "@Validated\n@ConfigurationProperties(\"payment\")\npublic record PaymentProperties(\n    @NotNull URI url,\n    @Min(1) @Max(10) int maxAttempts,\n    @DefaultValue(\"2s\") Duration timeout,\n    List<String> regions) {}"],
+      ex2: ['yaml', 'binding sources', "payment:\n  url: https://payments.internal\n  max-attempts: 3\n  timeout: 1500ms\n  regions: [eu-west-1, eu-central-1]\n# environment override: PAYMENT_MAXATTEMPTS=5, PAYMENT_REGIONS_0=eu-north-1"],
+      deepDive: {
+        explain: "Prefer `@ConfigurationProperties` over `@Value` for anything beyond a single value: one place documents the configuration surface, names are refactor-safe in code, and validation turns typos into startup failures instead of production surprises. Immutable records prevent code from mutating configuration at runtime. Units matter: use `Duration` and `DataSize` instead of ints with names like `timeoutMillis`, so values like `30s` are unambiguous. Environment-variable mapping is the most common source of confusion in containers: dashes are removed, not converted, and map keys with special characters need the bracket notation in system properties rather than environment variables. Keep secrets in their own properties classes so they can be excluded from logging and diagnostics, and never log a whole properties object without redaction.",
+        example: ['js', 'the environment variable name for a property', "function envVarName(prop) {\n  let out = '';\n  for (const ch of prop) {\n    if (ch === '.' || ch === '[') out += '_';      // separators and list index start\n    else if (ch === '-' || ch === ']') continue;   // dashes and closing bracket removed\n    else out += ch.toUpperCase();\n  }\n  return out;\n}"],
+        tradeoffs: [['Approach', 'Strength', 'Weakness'], ['@ConfigurationProperties record', 'Typed, validated, documented, immutable', 'One class per prefix'], ['@Value', 'Quick for one value', 'Stringly typed, scattered'], ['Environment.getProperty', 'Dynamic lookups', 'No validation or metadata'], ['Duration / DataSize types', 'Unit-safe values', 'Must use supported formats']],
+        failures: [['Typo in property name silently ignored', 'No validation; @Value default used', '@Validated properties with required fields'], ['Environment override not applied', 'Wrong env var name (dashes kept)', 'Apply relaxed binding rules'], ['Timeout of 30 treated as 30 ms instead of 30 s', 'int with unclear unit', 'Duration properties'], ['Secret printed in startup log', 'Logging the whole properties object', 'Redact secrets; separate secret properties']],
+      },
+      warn: "Do not log configuration objects wholesale at startup. Properties often include credentials and tokens; redact them or keep them in separate types that are never logged.",
+      production: {
+        numbers: "spring.datasource.url maps to SPRING_DATASOURCE_URL; my-app.retry-count to MYAPP_RETRYCOUNT; my.servers[0].host to MY_SERVERS_0_HOST.",
+        observe: "The configprops actuator endpoint shows bound values (with secrets sanitised); compare across environments to catch drift.",
+        security: "Validate security-relevant settings at startup (TLS required, allowed origins, token lifetimes) so a misconfiguration fails the deployment instead of weakening production.",
+        checklist: ['@ConfigurationProperties records for config groups', '@Validated with constraints', 'Duration and DataSize for units', 'Configuration processor for metadata', 'Correct env var names in deployments', 'Secrets redacted from logs', 'No scattered @Value strings'],
+        sources: ['Spring Boot reference: Type-safe Configuration Properties and Relaxed Binding', 'Spring Boot reference: Binding From Environment Variables', 'Spring Boot Configuration Metadata documentation'],
+      },
+      tip: "Write one test that boots the properties class with a production-like configuration file. It catches renamed keys and invalid values before deployment.",
+      faq: [['Why prefer @ConfigurationProperties over @Value?', 'Typed, validated, documented, and in one place.'], ['Env var for payment.max-attempts?', 'PAYMENT_MAXATTEMPTS.'], ['How do you fail fast on bad config?', '@Validated with constraint annotations.'], ['Best type for timeouts?', 'Duration.'], ['What generates IDE metadata?', 'spring-boot-configuration-processor.']],
+      ex: { prompt: 'Write envVarName(prop) converting a property name to its environment-variable form: "." and "[" become "_", "-" and "]" are removed, and letters become upper case.', fn: 'envVarName', params: 'prop', sig: '(string prop) -> string', java: `class Solution {
+    public String envVarName(String prop) {
+        StringBuilder out = new StringBuilder();
+        for (char ch : prop.toCharArray()) {
+            if (ch == '.' || ch == '[') out.append('_');
+            else if (ch == '-' || ch == ']') continue;
+            else out.append(Character.toUpperCase(ch));
+        }
+        return out.toString();
+    }
+}
+`, cases: [{ args: ['spring.datasource.url'], expect: 'SPRING_DATASOURCE_URL' }, { args: ['my-app.retry-count'], expect: 'MYAPP_RETRYCOUNT' }, { args: ['my.servers[0].host'], expect: 'MY_SERVERS_0_HOST' }], solution: `function envVarName(p){let out='';for(const ch of p){if(ch==='.'||ch==='[')out+='_';else if(ch==='-'||ch===']')continue;else out+=ch.toUpperCase()}return out}`, hint: 'Character by character.' },
+      quiz: [
+        choice('jv-config-properties-q1', 'jv-config-properties', 'Environment variable for app.cache.max-size?', ['APP_CACHE_MAXSIZE', 'APP_CACHE_MAX_SIZE', 'app.cache.max-size', 'APP-CACHE-MAX-SIZE'], 0, 'Dashes removed.'),
+        choice('jv-config-properties-q2', 'jv-config-properties', 'A required URL property is missing in production. Best behaviour?', ['startup fails via @Validated', 'fail on first request', 'use null silently', 'log a warning'], 0, 'Fail fast.'),
+        choice('jv-config-properties-q3', 'jv-config-properties', 'Best Java type for "timeout: 30s"?', ['Duration', 'int', 'String', 'long millis named timeout'], 0, 'Units.'),
+        fill('jv-config-properties-q4', 'jv-config-properties', 'Binding many properties to a typed object uses @Configuration___', ['Properties'], 'Type-safe.'),
+      ],
+    }),
+    deepTopic({
+      id: 'l6', key: 'sb-co-6', title: 'Proxies, AOP, and self-invocation', concept: 'jv-spring-proxies',
+      story: "\"`@Transactional` does not work!\" is one of the most common Spring questions on Stack Overflow. The usual cause is not a bug: the annotated method was called from another method **in the same class**. Spring implements `@Transactional`, `@Cacheable`, `@Async`, `@Retryable`, and method security with **proxies** that wrap your bean, and a call from inside the bean to itself never passes through the proxy. Understanding proxies explains a whole family of \"annotation ignored\" bugs.",
+      analogy: "A receptionist who logs every visitor entering a building: visitors from outside are logged, but people walking between rooms inside never pass the reception desk.",
+      timeline: [['2004', 'Spring AOP', 'Proxy-based declarative transactions (Spring 1.0).'], ['2006', 'AspectJ annotations', '@Aspect support in Spring 2.0.'], ['2014', 'CGLIB proxies by default', 'Spring Boot defaults to class-based proxies.'], ['2022', 'AOT and native', 'Proxies generated ahead of time for native images (Spring 6).']],
+      explain: "When a bean has advice (transactions, caching, security, async), Spring registers a **proxy** in its place: either a **JDK dynamic proxy** implementing the bean's interfaces, or a **CGLIB** subclass of the bean's class (Spring Boot's default). Callers holding the injected reference call the proxy, which starts a transaction, checks the cache, or submits to an executor, then delegates to the real object. Consequences: (1) **self-invocation** (`this.save()` from inside the bean) bypasses the proxy, so annotations on the called method do nothing; (2) annotated methods should be **public** (Spring 6 also supports protected and package-private for class-based proxies, but public is the safe rule); (3) **final** methods and final classes cannot be overridden by CGLIB, so advice on them is skipped; (4) annotations on private methods never apply. Fixes for self-invocation: move the method to another bean (usually the cleanest), inject the bean's own proxy (`@Lazy` self-reference), or use `TransactionTemplate` programmatically.",
+      diagram: "controller → [proxy: begin tx] → orderService.placeOrder() → [proxy: commit]\ninside placeOrder(): this.audit()  ──▶ direct call, NO proxy → @Transactional(REQUIRES_NEW) on audit() ignored\nadvice applies only if: called through the proxy AND method public AND not final",
+      ex1: ['java', 'the self-invocation trap and the fix', "@Service\nclass OrderService {\n    @Transactional public void placeOrder(Order o) { … audit(o); }      // this.audit(o): no proxy\n    @Transactional(propagation = REQUIRES_NEW) public void audit(Order o) { … }   // ignored here\n}\n// fix: move audit() to AuditService and inject it\n@Service class AuditService { @Transactional(propagation = REQUIRES_NEW) public void audit(Order o) { … } }"],
+      ex2: ['java', 'programmatic transactions instead', "transactionTemplate.executeWithoutResult(status -> {\n    orders.save(order);\n    outbox.save(OrderPlaced.of(order));\n});"],
+      deepDive: {
+        explain: "Proxy behaviour also explains startup errors and test surprises: a bean injected by its class type fails when only a JDK interface proxy exists (Boot uses CGLIB by default to avoid this), `getClass()` on a bean returns the generated subclass, and equality or `instanceof` checks can behave unexpectedly. `@Async` on a self-invoked method runs synchronously; `@Cacheable` on a self-invoked method never caches; method security (`@PreAuthorize`) on a self-invoked method is **not enforced**, which is a security bug. AspectJ weaving (compile-time or load-time) removes the self-invocation limitation by modifying bytecode, at the cost of build complexity; most teams prefer restructuring. Ordering matters when several proxies apply (for example security, then transactions, then caching); `@Order` on aspects controls it. Keep advised methods coarse-grained (service boundaries), not tiny private helpers.",
+        example: ['js', 'does proxy-based advice apply to a call?', "function proxyApplies(selfInvocation, isPublic, isFinal) {\n  return !selfInvocation && isPublic && !isFinal;   // must pass through the proxy and be overridable\n}"],
+        tradeoffs: [['Approach', 'Strength', 'Weakness'], ['Proxy-based AOP (default)', 'No build changes', 'Self-invocation and final methods not advised'], ['Separate bean for advised method', 'Clear boundaries, works with proxies', 'One more class'], ['Programmatic (TransactionTemplate)', 'Explicit, works anywhere', 'More code'], ['AspectJ weaving', 'Advises any call', 'Build complexity']],
+        failures: [['REQUIRES_NEW audit rolls back with the order', 'Self-invocation bypassed the proxy', 'Move audit to another bean'], ['@Cacheable never hits', 'Called from the same class', 'Call through another bean'], ['@PreAuthorize not enforced', 'Self-invocation or private method', 'Security on public methods called through proxies'], ['@Transactional on private method ignored', 'Proxies cannot intercept private methods', 'Public methods at service boundaries']],
+      },
+      warn: "Method security annotations such as @PreAuthorize are skipped on self-invoked or private methods. An authorisation check that silently never runs is a vulnerability; test it.",
+      production: {
+        numbers: "Each proxied call adds an extra method dispatch and interceptor chain, typically microseconds, negligible compared with the database or network work it wraps.",
+        observe: "Integration tests that assert transactional and caching behaviour (rollback, cache hits) catch proxy bypasses that unit tests with mocks never see.",
+        security: "Test authorisation through the HTTP or service boundary with real Spring Security configuration, so proxy bypasses show up as failing tests.",
+        checklist: ['Advised methods public and non-final', 'No self-invocation of advised methods', 'Advice at service boundaries', 'TransactionTemplate where proxies are awkward', 'Integration tests for transactions and caching', 'Security tests through the proxy', 'Aspect order explicit when multiple apply'],
+        sources: ['Spring Framework reference: Understanding AOP Proxies', 'Spring Framework reference: Declarative transaction management (proxy mode)', 'Spring Security reference: Method Security'],
+      },
+      tip: "When an annotation \"does nothing\", ask one question first: did the call come from outside the bean, through the injected reference? Nine times out of ten the answer is no.",
+      faq: [['Why does @Transactional fail on self-calls?', 'The call bypasses the proxy.'], ['What proxy type does Spring Boot use by default?', 'CGLIB class-based proxies.'], ['Can advice apply to final methods?', 'No; CGLIB cannot override them.'], ['Cleanest fix for self-invocation?', 'Move the method to another bean.'], ['Which annotations rely on proxies?', '@Transactional, @Cacheable, @Async, @PreAuthorize, and others.']],
+      ex: { prompt: 'Write proxyApplies(selfInvocation, isPublic, isFinal) returning true only when the call is not a self-invocation, the method is public, and the method is not final.', fn: 'proxyApplies', params: 'selfInvocation, isPublic, isFinal', sig: '(bool selfInvocation, bool isPublic, bool isFinal) -> bool', java: `class Solution {
+    public boolean proxyApplies(boolean selfInvocation, boolean isPublic, boolean isFinal) {
+        return !selfInvocation && isPublic && !isFinal;
+    }
+}
+`, cases: [{ args: [false, true, false], expect: true }, { args: [true, true, false], expect: false }, { args: [false, false, false], expect: false }, { args: [false, true, true], expect: false }], solution: `function proxyApplies(s,p,f){return !s&&p&&!f}`, hint: 'All three conditions.' },
+      quiz: [
+        choice('jv-spring-proxies-q1', 'jv-spring-proxies', 'placeOrder() calls this.audit() annotated REQUIRES_NEW. What happens?', ['audit runs in the same transaction; annotation ignored', 'new transaction starts', 'exception', 'deadlock'], 0, 'Self-invocation.'),
+        choice('jv-spring-proxies-q2', 'jv-spring-proxies', '@Cacheable on a private method...', ['never applies', 'works', 'applies only in tests', 'throws'], 0, 'Proxy limits.'),
+        choice('jv-spring-proxies-q3', 'jv-spring-proxies', 'Cleanest fix for self-invocation?', ['move the advised method to another bean', 'make it final', 'make it private', 'use static'], 0, 'Boundaries.'),
+        fill('jv-spring-proxies-q4', 'jv-spring-proxies', 'Spring Boot\'s default class-based proxies use ___', ['CGLIB', 'cglib'], 'Subclasses.'),
+      ],
+    }),
+  ],
+  exam: [
+    choice('sb-co-e1', 'jv-di', 'Preferred injection style in Spring?', ['constructor injection', 'field injection', 'static lookups', 'service locator'], 0, 'Explicit.'),
+    choice('sb-co-e2', 'jv-bean-scopes', 'Default bean scope and its implication:', ['singleton; must be thread-safe', 'prototype; new per call', 'request; per HTTP request', 'session'], 0, 'Shared.'),
+    choice('sb-co-e3', 'jv-autoconfig', 'Your own DataSource bean causes Boot\'s to...', ['back off', 'take precedence', 'merge', 'fail startup'], 0, 'MissingBean.'),
+    choice('sb-co-e4', 'jv-config-precedence', 'Highest precedence among these:', ['command-line argument', 'environment variable', 'application.yml', 'default'], 0, 'Order.'),
+    choice('sb-co-e5', 'jv-config-properties', 'Env var for spring.datasource.url:', ['SPRING_DATASOURCE_URL', 'spring_datasource_url', 'SPRING-DATASOURCE-URL', 'DATASOURCE_URL'], 0, 'Relaxed binding.'),
+    choice('sb-co-e6', 'jv-spring-proxies', 'Why is @Transactional ignored on this.method() calls?', ['the call bypasses the proxy', 'transactions are disabled', 'wrong database', 'GC'], 0, 'Proxies.'),
+    choice('sb-co-e7', 'jv-di', 'Constructor cycle between two beans results in...', ['startup failure', 'lazy resolution always', 'duplicate beans', 'nothing'], 0, 'Cycle.'),
+    choice('sb-co-e8', 'jv-autoconfig', 'Explains why an auto-configuration did or did not apply:', ['conditions evaluation report', 'GC log', 'thread dump', 'heap dump'], 0, '--debug.'),
+    choice('sb-co-e9', 'jv-config-properties', 'Fail startup on invalid configuration:', ['@Validated @ConfigurationProperties', '@Value defaults', 'System.getenv', 'logging'], 0, 'Fail fast.'),
+    order('sb-co-e10', 'jv-bean-scopes', 'Order a singleton bean\'s lifecycle.', ['Constructor', 'Dependency injection', '@PostConstruct', '@PreDestroy at shutdown'], 'Lifecycle.'),
+    order('sb-co-e11', 'jv-config-precedence', 'Order property sources from highest to lowest precedence.', ['Command-line arguments', 'Environment variables', 'Profile-specific file', 'application.yml'], 'Precedence.'),
+    fill('sb-co-e12', 'jv-autoconfig', 'Back off when the user defines a bean: @ConditionalOn___Bean', ['Missing'], 'Overrides.'),
+  ],
+};
